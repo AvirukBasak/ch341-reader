@@ -231,6 +231,8 @@ def usb_bulk_read(dev, endpoint: int, size: int, timeout: int = 1000):
     Read up to *size* bytes from a bulk IN *endpoint*.
 
     Returns a bytes object on success, or a negative errno int on failure.
+    Timeouts (errno 110 / ETIMEDOUT) are logged at DEBUG level because they
+    are normal during idle polling and should not clutter the terminal.
     """
     try:
         data = dev.read(endpoint, size, timeout)
@@ -252,6 +254,19 @@ def usb_interrupt_read(dev, endpoint: int, size: int, timeout: int = 1000):
     Returns bytes on success, negative errno int on failure.
     """
     return usb_bulk_read(dev, endpoint, size, timeout)
+
+
+def usb_get_max_packet_size(dev, endpoint: int) -> int:
+    """
+    Return the wMaxPacketSize for *endpoint* from the active configuration.
+    Returns -1 if the endpoint is not found.
+    """
+    cfg = dev.get_active_configuration()
+    for intf in cfg:
+        for ep in intf:
+            if ep.bEndpointAddress == endpoint:
+                return ep.wMaxPacketSize
+    return -1
 
 
 def usb_bulk_write(dev, endpoint: int, data: bytes, timeout: int = 1000):

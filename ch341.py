@@ -41,6 +41,7 @@ from usb_compat import (
     usb_bulk_read,
     usb_bulk_write,
     usb_interrupt_read,
+    usb_get_max_packet_size,
 )
 
 log = logging.getLogger(__name__)
@@ -490,8 +491,15 @@ def ch341_read(handle: CH341Device, size: int = 64,
     """
     Read up to *size* bytes from the CH341 bulk IN endpoint.
 
+    The read size is clamped to at least wMaxPacketSize for the bulk IN
+    endpoint — passing a smaller value causes EOVERFLOW on some hosts.
+
     Returns bytes on success, raises OSError on failure.
     """
+    mps = getattr(handle, "bulk_in_max_packet_size", 64)
+    if mps > 0 and size < mps:
+        log.debug("ch341_read: clamping size %d -> %d (wMaxPacketSize)", size, mps)
+        size = mps
     result = usb_bulk_read(handle.dev, CH341_BULK_IN_EP, size, timeout)
     if isinstance(result, int):  # negative errno
         raise OSError(-result, f"ch341_read failed (errno {result})")
@@ -574,8 +582,10 @@ def ch341_open(vendor_id: int = CH341_VENDOR_ID,
     signal.signal(signal.SIGINT,  _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    log.info("CH341 device opened (version 0x%02x, baud %d)",
-             priv.version, priv.baud_rate)
+    mps = usb_get_max_packet_size(udev, CH341_BULK_IN_EP)
+    log.info("CH341 device opened (version 0x%02x, baud %d, bulk IN max packet size %d)",
+             priv.version, priv.baud_rate, mps)
+    handle.bulk_in_max_packet_size = mps
     return handle
 
 
