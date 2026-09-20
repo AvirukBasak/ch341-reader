@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/bin/env python3
 """
 ch341_serial.py - Layer 3: interactive CLI serial monitor for the CH341
 
