@@ -1,0 +1,9 @@
+SkyTraQ chips
+PX1125S-01A
+IoT:M2532U01
+
+iR
+CIROCOMM
+T
+D000
+
