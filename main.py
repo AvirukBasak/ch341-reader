@@ -20,14 +20,10 @@ import sys
 from ch341 import (
     CH341_VENDOR_ID,
     CH341_PRODUCT_ID,
-    DEFAULT_BAUD_RATE,
-    CH341_LCR_ENABLE_RX,
-    CH341_LCR_ENABLE_TX,
-    CH341_LCR_CS8,
+    CH341_DEFAULT_BAUDRATE,
     ch341_open,
     ch341_close,
     ch341_read,
-    ch341_read_interrupt,
     ch341_carrier_raised,
 )
 
@@ -75,7 +71,7 @@ def run(handle, hex_mode: bool, read_size: int, timeout: int) -> None:
         if hex_mode:
             hex_str = " ".join(f"{b:02x}" for b in data)
             print(hex_str, flush=True)
-        else:
+        elif out:
             out.write(data)
             out.flush()
 
@@ -91,8 +87,8 @@ def main() -> None:
     parser.add_argument(
         "--baud", "-b",
         type=int,
-        default=DEFAULT_BAUD_RATE,
-        help=f"Baud rate (default: {DEFAULT_BAUD_RATE})",
+        default=CH341_DEFAULT_BAUDRATE,
+        help=f"Baud rate (default: {CH341_DEFAULT_BAUDRATE})",
     )
     parser.add_argument(
         "--vid",
@@ -150,7 +146,7 @@ def main() -> None:
         sys.exit(1)
 
     # -- Report initial modem status -----------------------------------------
-    if ch341_carrier_raised(handle.priv):
+    if ch341_carrier_raised(handle):
         log.info("Carrier detected (DCD asserted)")
     else:
         log.info("No carrier (DCD not asserted)")

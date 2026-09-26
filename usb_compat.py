@@ -11,6 +11,7 @@ do the same  `if r < 0: return r`  idiom as the original C code.
 
 import errno as _errno
 import logging
+from typing import Any, Generator
 import usb.core
 import usb.util
 
@@ -163,7 +164,7 @@ def usb_kill_urb(urb):
 # ---------------------------------------------------------------------------
 # Device / interface lifecycle helpers
 # ---------------------------------------------------------------------------
-def usb_find_device(id_vendor: int, id_product: int):
+def usb_find_device(id_vendor: int, id_product: int) -> usb.core.Device | Generator[usb.core.Device, Any, None] | None:
     """
     Locate the first USB device matching *id_vendor*/*id_product*.
 
