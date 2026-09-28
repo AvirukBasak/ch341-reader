@@ -9,18 +9,20 @@ Reads data continuously from the CH341 device and prints it to the terminal.
 Ctrl-C cleanly releases the device before exit.
 
 Depends on:
-    ch341.py      (layer 2 — driver logic)
-    usb_compat.py (layer 1 — libusb/PyUSB compat)
+    ch341.py      (layer 2 - driver logic)
+    usb_compat.py (layer 1 - libusb/PyUSB compat)
 """
 
 import argparse
 import logging
 import sys
+import os
 
 from ch341 import (
     CH341_VENDOR_ID,
     CH341_PRODUCT_ID,
     CH341_DEFAULT_BAUDRATE,
+    CH341_DEFAULT_BULK_IN_SIZE,
     ch341_open,
     ch341_close,
     ch341_read,
@@ -28,19 +30,49 @@ from ch341 import (
 )
 
 # ---------------------------------------------------------------------------
-# Logging — show INFO and above on stderr so stdout stays clean data output
+# Logging - show INFO and above on stderr so stdout stays clean data output
 # ---------------------------------------------------------------------------
 logging.basicConfig(
     stream=sys.stderr,
     level=logging.INFO,
     format="[%(levelname)s] %(name)s: %(message)s",
 )
-log = logging.getLogger("ch341_serial")
-
+log = logging.getLogger(os.path.basename(__file__))
 
 # ---------------------------------------------------------------------------
-# Read loop
+# Read / stream Loop
 # ---------------------------------------------------------------------------
+
+def stream(handle, hex_mode: bool, read_size: int, timeout: int, process_instream = lambda resp: None) -> None:
+    log.info("Streaming - press Ctrl-C to exit")
+    out = sys.stdout.buffer if not hex_mode else None
+    try:
+        while True:
+            try:
+                data = ch341_read(handle, size=read_size, timeout=timeout)
+                process_instream(data)
+            except OSError as e:
+                if e.errno in (110, 60): # ETIMEDOUT
+                    # try again
+                    continue
+                log.error("read error: %s", e)
+                break
+
+            if not data:
+                # data empty? try again
+                continue
+
+            if hex_mode:
+                print(" ".join(hex(b) for b in data), flush=True)
+            elif out:
+                out.write(data)
+                out.flush()
+
+    except KeyboardInterrupt as e:
+        if isinstance(e, KeyboardInterrupt):
+            print(file=sys.stderr)
+            log.info("Interrupted")
+
 
 def run(handle, hex_mode: bool, read_size: int, timeout: int) -> None:
     """
@@ -49,31 +81,7 @@ def run(handle, hex_mode: bool, read_size: int, timeout: int) -> None:
     hex_mode=True  →  "de ad be ef  " style hex dump per line
     hex_mode=False →  raw bytes written directly (pass-through)
     """
-    log.info("Streaming — press Ctrl-C to exit")
-
-    # Flush stdout so piping works correctly
-    out = sys.stdout.buffer if not hex_mode else None
-
-    while True:
-        try:
-            data = ch341_read(handle, size=read_size, timeout=timeout)
-        except OSError as e:
-            # A timeout on an empty line is normal for interrupt-driven devices;
-            # errno 110 = ETIMEDOUT, errno 60 = same on macOS
-            if e.errno in (110, 60):
-                continue
-            log.error("read error: %s", e)
-            break
-
-        if not data:
-            continue
-
-        if hex_mode:
-            hex_str = " ".join(f"{b:02x}" for b in data)
-            print(hex_str, flush=True)
-        elif out:
-            out.write(data)
-            out.flush()
+    stream(handle, hex_mode, read_size, timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +90,7 @@ def run(handle, hex_mode: bool, read_size: int, timeout: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="CH341 USB serial monitor — streams device output to stdout",
+        description="CH341 USB serial monitor - streams device output to stdout",
     )
     parser.add_argument(
         "--baud", "-b",
@@ -111,8 +119,8 @@ def main() -> None:
     parser.add_argument(
         "--read-size",
         type=int,
-        default=64,
-        help="Max bytes per read call (default: 64)",
+        default=CH341_DEFAULT_BULK_IN_SIZE,
+        help=f"Max bytes per read call (default: {CH341_DEFAULT_BULK_IN_SIZE})",
     )
     parser.add_argument(
         "--timeout",

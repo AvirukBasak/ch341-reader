@@ -11,11 +11,12 @@ do the same  `if r < 0: return r`  idiom as the original C code.
 
 import errno as _errno
 import logging
+import os
 from typing import Any, Generator
 import usb.core
 import usb.util
 
-log = logging.getLogger(__name__)
+log = logging.getLogger(os.path.basename(__file__))
 
 # ---------------------------------------------------------------------------
 # Kernel-style errno constants (negative, as returned by kernel functions)
@@ -114,7 +115,7 @@ def usb_control_msg_recv(dev, ifnum, request, requesttype,
             request,
             value,
             index,
-            size,      # wLength — how many bytes to read
+            size,      # wLength - how many bytes to read
             timeout,
         )
         # Copy received bytes into the caller's buffer
@@ -130,20 +131,20 @@ def usb_control_msg_recv(dev, ifnum, request, requesttype,
 
 
 # ---------------------------------------------------------------------------
-# Pipe constructors — no-ops in userspace; direction lives in requesttype
+# Pipe constructors - no-ops in userspace; direction lives in requesttype
 # ---------------------------------------------------------------------------
 def usb_sndctrlpipe(dev, endpoint):
-    """Kernel macro stub — direction is encoded in bmRequestType."""
+    """Kernel macro stub - direction is encoded in bmRequestType."""
     return 0  # ignored by usb_control_msg above
 
 
 def usb_rcvctrlpipe(dev, endpoint):
-    """Kernel macro stub — direction is encoded in bmRequestType."""
+    """Kernel macro stub - direction is encoded in bmRequestType."""
     return 0
 
 
 # ---------------------------------------------------------------------------
-# usb_submit_urb / usb_kill_urb — synchronous stubs
+# usb_submit_urb / usb_kill_urb - synchronous stubs
 #
 # The ch341 driver uses the interrupt URB only to receive modem-status
 # updates.  We model this as a synchronous bulk/interrupt read exposed
@@ -151,7 +152,7 @@ def usb_rcvctrlpipe(dev, endpoint):
 # These stubs satisfy any remaining call-sites.
 # ---------------------------------------------------------------------------
 def usb_submit_urb(urb, memflags=0):
-    """No-op stub — interrupt reads are handled synchronously in layer 2."""
+    """No-op stub - interrupt reads are handled synchronously in layer 2."""
     log.debug("usb_submit_urb called (no-op in compat layer)")
     return 0
 
@@ -251,7 +252,7 @@ def usb_interrupt_read(dev, endpoint: int, size: int, timeout: int = 1000):
     """
     Read up to *size* bytes from an interrupt IN *endpoint*.
 
-    Same as usb_bulk_read — PyUSB uses the same dev.read() for both.
+    Same as usb_bulk_read - PyUSB uses the same dev.read() for both.
     Returns bytes on success, negative errno int on failure.
     """
     return usb_bulk_read(dev, endpoint, size, timeout)

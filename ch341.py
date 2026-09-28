@@ -22,6 +22,7 @@ This driver only supports the asynchronous serial interface.
 
 import atexit
 import logging
+import os
 import signal
 import sys
 
@@ -44,7 +45,7 @@ from usb_compat import (
     usb_get_max_packet_size,
 )
 
-log = logging.getLogger(__name__)
+log = logging.getLogger(os.path.basename(__file__))
 
 # ---------------------------------------------------------------------------
 # Device identification
@@ -53,11 +54,12 @@ CH341_VENDOR_ID  = 0x1A86
 CH341_PRODUCT_ID = 0x7523   # CH340/CH341 USB-serial
 
 CH341_DEFAULT_BAUDRATE = 115200
+CH341_DEFAULT_BULK_IN_SIZE = 32
 
 _DEFAULT_TIMEOUT   = 1000
 
 # ---------------------------------------------------------------------------
-# BIT helper — replaces the kernel BIT(n) macro
+# BIT helper - replaces the kernel BIT(n) macro
 # ---------------------------------------------------------------------------
 def _SET_BIT(n: int) -> int:
     return 1 << n
@@ -88,7 +90,7 @@ _CH341_BIT_DCD = 0x08
 _CH341_BITS_MODEM_STAT = 0x0F  # all bits
 
 # ---------------------------------------------------------------------------
-# Break support — the information used to implement this was gleaned from
+# Break support - the information used to implement this was gleaned from
 # the Net/FreeBSD uchcom.c driver by Takanori Watanabe.  Domo arigato.
 # ---------------------------------------------------------------------------
 _CH341_REQ_READ_VERSION = 0x5F
@@ -156,7 +158,7 @@ _CH341_BULK_OUT_EP = 0x02   # bulk OUT
 _CH341_INT_IN_EP   = 0x81   # interrupt IN (modem status)
 
 # ---------------------------------------------------------------------------
-# Private state — replaces struct ch341_private
+# Private state - replaces struct ch341_private
 # ---------------------------------------------------------------------------
 class _CH341Private:
     def __init__(self):
@@ -180,7 +182,7 @@ class CH341Device:
     def __init__(self, udev, priv: _CH341Private):
         self._dev  = udev          # underlying usb.core.Device
         self._priv = priv
-        self._bulk_in_max_packet_size = 32
+        self._bulk_in_max_packet_size = CH341_DEFAULT_BULK_IN_SIZE
 
 # ---------------------------------------------------------------------------
 # Low-level control helpers
@@ -308,7 +310,7 @@ def _ch341_set_baudrate_lcr(dev, priv: _CH341Private,
         return -22  # -EINVAL
 
     #
-    # CH341A buffers data until a full endpoint-size packet (32 bytes)
+    # CH341A buffers data until a full endpoint-size packet
     # has been received unless bit 7 is set.
     #
     # At least one device with version 0x27 appears to have this bit
@@ -485,20 +487,20 @@ def ch341_update_status(handle: CH341Device, data: bytes) -> dict:
     return changes
 
 # ---------------------------------------------------------------------------
-# Public I/O functions (new in Python port — no TTY layer)
+# Public I/O functions (new in Python port - no TTY layer)
 # ---------------------------------------------------------------------------
 
-def ch341_read(handle: CH341Device, size: int = 64,
+def ch341_read(handle: CH341Device, size: int = CH341_DEFAULT_BULK_IN_SIZE,
                timeout: int = _DEFAULT_TIMEOUT) -> bytes:
     """
     Read up to *size* bytes from the CH341 bulk IN endpoint.
 
     The read size is clamped to at least wMaxPacketSize for the bulk IN
-    endpoint — passing a smaller value causes EOVERFLOW on some hosts.
+    endpoint - passing a smaller value causes EOVERFLOW on some hosts.
 
     Returns bytes on success, raises OSError on failure.
     """
-    mps = getattr(handle, "bulk_in_max_packet_size", 64)
+    mps = getattr(handle, "bulk_in_max_packet_size", CH341_DEFAULT_BULK_IN_SIZE)
     if mps > 0 and size < mps:
         log.debug("ch341_read: clamping size %d -> %d (wMaxPacketSize)", size, mps)
         size = mps
@@ -580,8 +582,9 @@ def ch341_open(vendor_id: int = CH341_VENDOR_ID,
         raise OSError(-r, f"ch341_detect_quirks failed: {r}")
 
     # Register cleanup on normal interpreter exit and on SIGINT / SIGTERM
+    # Disabled SIGINT coz we let the shell.py handle it
     atexit.register(_ch341_cleanup_handle, handle)
-    signal.signal(signal.SIGINT,  _ch341_signal_handler)
+    # signal.signal(signal.SIGINT,  _ch341_signal_handler)
     signal.signal(signal.SIGTERM, _ch341_signal_handler)
 
     mps = usb_get_max_packet_size(udev, _CH341_BULK_IN_EP)
@@ -642,7 +645,7 @@ def ch341_reset_resume(handle: CH341Device) -> int:
     return r
 
 # ---------------------------------------------------------------------------
-# Interrupt / signal handlers — ensure device is released on exit
+# Interrupt / signal handlers - ensure device is released on exit
 # ---------------------------------------------------------------------------
 
 _open_handles: list = []   # weak registry so atexit can clean up
@@ -652,7 +655,7 @@ def _ch341_cleanup_handle(handle: CH341Device) -> None:
 
 
 def _ch341_signal_handler(signum, frame):
-    log.info("Signal %d received — closing CH341 device(s)", signum)
+    log.info("Signal %d received - closing CH341 device(s)", signum)
     # atexit handlers fire on sys.exit()
     sys.exit(0)
 
@@ -661,6 +664,7 @@ __all__ = [
     "CH341_VENDOR_ID",
     "CH341_PRODUCT_ID",
     "CH341_DEFAULT_BAUDRATE",
+    "CH341_DEFAULT_BULK_IN_SIZE",
     "ch341_carrier_raised",
     "ch341_dtr_rts",
     "ch341_update_status",
