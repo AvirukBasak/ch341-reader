@@ -131,7 +131,7 @@ def stream(handle, hex_mode: bool, read_size: int, timeout: int, process_instrea
                 continue
 
             if hex_mode:
-                print(" ".join(hex(b) for b in data), flush=True)
+                print(" ".join(f'{b:02x}' for b in data), flush=True)
             elif out:
                 out.write(data)
                 out.flush()
@@ -188,27 +188,28 @@ def cmd_read(args):
     stream(state["handle"], hex_mode, read_size, state["timeout"])
 
 
-def parse_skytraq_px_ack(resp: bytes) -> tuple[bool, str | None]:
+def parse_skytraq_px_ack(frame: bytes) -> tuple[bool, str | None]:
     """
     Returns a tuple. First member if true implies success else
     second member contains parsing error string. On success, 2nd
     member if None implies NACK else successful ACK.
     """
     # Scan for start sequence in case there's leading NMEA noise
-    idx = resp.find(b'\xA0\xA1')
+    idx = frame.find(b'\xA0\xA1')
     if idx == -1:
         return False, f"start sequence xA0 xA1 not found"
 
-    frame = resp[idx:]
+     # a0 a1 [size:2B] [type:1B] [payload?] [cs:1B] 0d 0a (assume minimum payload of 1B)
     if len(frame) < 9:
         return False, f"response too short: {frame.hex()}"
 
-    msg_id = frame[4] # 0x83 = ACK, 0x84 = NACK
-    cmd_id = frame[5] # the command ID being ACK'd
+    ack_payload_size = int.from_bytes(frame[2:4], 'big')
+    ack_type         = frame[4] # 0x83 = ACK, 0x84 = NACK
+    ack_payload      = frame[5 : 5 + ack_payload_size - 1] # size includes ack_type, so -1
 
-    if msg_id == 0x83:   # ACK
-        return True, hex(cmd_id)
-    elif msg_id == 0x84: # NACK
+    if ack_type == 0x83: # ACK
+        return True, ' '.join(f'{b:02x}' for b in ack_payload)
+    elif ack_type == 0x84: # NACK
         return True, None
     else:
         return False, f"unexpected response: {frame.hex()}"
@@ -232,7 +233,7 @@ def cmd_write(args):
 
     if write_mode == DataMode.HEX:
         try:
-            payload = bytes.fromhex(args[0])
+            payload = bytes.fromhex(args[0].replace("_", ""))
         except ValueError as e:
             log.error(f"invalid hex: {e}")
             return
@@ -297,7 +298,7 @@ def cmd_write(args):
     if not success_stats["success"]:
         log.error(f"parse failed: {success_stats["cmd_id_or_err"]}")
     elif success_stats["cmd_id_or_err"]:
-        log.info(f"ACK: command id: {success_stats["cmd_id_or_err"]}")
+        log.info(f"ACK payload: {success_stats["cmd_id_or_err"]}")
     else:
         log.error("NACK: command rejected")
 

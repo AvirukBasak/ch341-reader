@@ -49,8 +49,11 @@ write [payload] [write-mode=txt] [write-template=raw]
 # Reset SkyTraq Phoenix chip (hex payload, sktrq-px framing)
 write 01 hex sktrq-px
 
-# Send a raw text string (escape sequences supported)
+# Send a text string (escape sequences supported)
 write hello\n
+
+# Send a raw bytes (_ is ingnored, allowed for readability)
+write 0a_0b_0c_0d_0e_0f hex raw
 ```
 
 The `sktrq-px` template automatically wraps your `[payload]` in the SkyTraq binary frame:
