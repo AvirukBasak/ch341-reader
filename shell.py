@@ -16,13 +16,25 @@ set timeout   [int]
 set debug     [0|1]
 
 read  [read-size=None] [read-mode=None]
-write [hex-payload]
+write [payload]        [write-mode=txt] [write-template=raw]
 
 list
 open vid:pid
 close
+
+Supported Read and Write Modes:
+- read-mode:  txt - Standard text output
+- read-mode:  hex - Display space separated hex bytes as data arrives
+- write-mode: txt - Parse as Python bytes string, spaces unsupported
+- read-mode:  hex - Parse as hex number, same endian as input
+
+Supported Write Templates:
+- raw      - Exact bytes
+- sktrq-px - SkyTraq Phoenix GNSS receiver
 """
 
+import ast
+from enum import Enum
 import logging
 import sys
 import os
@@ -49,13 +61,33 @@ log = logging.getLogger(os.path.basename(__file__))
 
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+NONE = "None"
+
+class WriteTemplate(str, Enum):
+    RAW      = "raw"
+    SKTRQ_PX = "sktrq-px"
+
+WRITE_TEMPLATES = [WriteTemplate.RAW, WriteTemplate.SKTRQ_PX]
+
+
+class DataMode(str, Enum):
+    HEX = "hex"
+    TXT = "txt"
+
+DATA_MODES = [DataMode.HEX, DataMode.TXT]
+
+
+# ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
 
 state = {
     "baud":      CH341_DEFAULT_BAUDRATE,
     "read-size": CH341_DEFAULT_BULK_IN_SIZE,
-    "read-mode": "txt",
+    "read-mode": DataMode.TXT,
     "timeout":   1000,
     "debug":     False,
     "handle":    None,
@@ -66,13 +98,14 @@ state = {
 GETTABLE = {"baud", "read-size", "read-mode", "timeout", "debug"}
 
 SET_PARSERS = {
-    "baud":      int,
-    "read-size": int,
-    "read-mode": lambda v: v if v in ("hex", "txt") else (_ for _ in ()).throw(ValueError(f"invalid read-mode: {v}")),
-    "timeout":   int,
-    "debug":     lambda v: bool(int(v)),
+    "baud":           int,
+    "read-size":      int,
+    "read-mode":      lambda v: v if v in DATA_MODES      else (_ for _ in ()).throw(ValueError(f"invalid read-mode: {v}")),
+    "write-mode":     lambda v: v if v in DATA_MODES      else (_ for _ in ()).throw(ValueError(f"invalid write-mode: {v}")),
+    "write-template": lambda v: v if v in WRITE_TEMPLATES else (_ for _ in ()).throw(ValueError(f"invalid write-template: {v}")),
+    "timeout":        int,
+    "debug":          lambda v: bool(int(v)),
 }
-
 
 # ---------------------------------------------------------------------------
 # Read / stream Loop
@@ -143,12 +176,19 @@ def cmd_read(args):
     if state["handle"] is None:
         log.error("no device open")
         return
-    read_size = int(args[0]) if args else state["read-size"]
-    hex_mode  = (args[1] if len(args) > 1 else state["read-mode"]) == "hex"
+
+    try:
+        read_size = SET_PARSERS["read-size"](args[0]) if args          and args[0] != NONE else state["read-size"]
+        read_mode = SET_PARSERS["read-mode"](args[1]) if len(args) > 1 and args[1] != NONE else state["read-mode"]
+    except ValueError as e:
+        log.error(f"{e}")
+        return
+
+    hex_mode  = read_mode == DataMode.HEX
     stream(state["handle"], hex_mode, read_size, state["timeout"])
 
 
-def parse_ack(resp: bytes) -> tuple[bool, str | None]:
+def parse_skytraq_px_ack(resp: bytes) -> tuple[bool, str | None]:
     """
     Returns a tuple. First member if true implies success else
     second member contains parsing error string. On success, 2nd
@@ -178,30 +218,46 @@ def cmd_write(args):
     if state["handle"] is None:
         log.error("no device open")
         return
+
     if not args:
-        log.error("write requires hex bytes (e.g. write deadbeef)")
+        log.error("missing write payload")
         return
 
     try:
-        payload = bytes.fromhex(args[0])
+        write_mode     = SET_PARSERS["write-mode"]    (args[1]) if len(args) > 1 and args[1] != NONE else DataMode.TXT
+        write_template = SET_PARSERS["write-template"](args[2]) if len(args) > 2 and args[2] != NONE else WriteTemplate.RAW
     except ValueError as e:
-        log.error(f"invalid hex: {e}")
+        log.error(f"{e}")
         return
+
+    if write_mode == DataMode.HEX:
+        try:
+            payload = bytes.fromhex(args[0])
+        except ValueError as e:
+            log.error(f"invalid hex: {e}")
+            return
+    else: # txt
+        payload = ast.literal_eval(f'b"{args[0]}"')
     size = len(payload)
 
-    cs = 0
-    for b in payload: cs ^= b
-
-    # A0 A1 [size:2B] [payload:size] [cs:1B] 0D 0A
-    # [size] unit is in bytes, stored big endian
-    # [cs] is just xor of everything, likely a simple xor checksum
-    # payload contains actual command, see datasheet
-    data = (
-        bytes([0xA0, 0xA1]) +
-        size.to_bytes(2, 'big') +
-        bytes(payload) +
-        bytes([cs, 0x0D, 0x0A])
-    )
+    if write_template == WriteTemplate.RAW:
+        data = payload
+    elif write_template == WriteTemplate.SKTRQ_PX:
+        cs = 0
+        for b in payload: cs ^= b
+        # A0 A1 [size:2B] [payload:size] [cs:1B] 0D 0A
+        # [size] unit is in bytes, stored big endian
+        # [cs] is just xor of everything, likely a simple xor checksum
+        # payload contains actual command, see datasheet
+        data = (
+            bytes([0xA0, 0xA1]) +
+            size.to_bytes(2, 'big') +
+            bytes(payload) +
+            bytes([cs, 0x0D, 0x0A])
+        )
+    else:
+        log.error(f"unknown template: {write_template}")
+        return
 
     ch341_write(state["handle"], data)
 
@@ -214,10 +270,14 @@ def cmd_write(args):
     }
 
     def process_instream(resp):
+        if write_template == WriteTemplate.RAW:
+            success_stats["success"] = True
+            success_stats["cmd_id_or_err"] = "Unsupported Device"
+            return
         # this fn gets called for every stream loop, if onces ACK/NACK found, this needs not run
         if success_stats["success"]: return
         # call parser once
-        parse_success, cmd_id = parse_ack(resp)
+        parse_success, cmd_id = parse_skytraq_px_ack(resp)
         # parse failed, return but increment the counter
         if not parse_success:
             success_stats["fails_count"] += 1
@@ -231,7 +291,7 @@ def cmd_write(args):
             success_stats["success"] = parse_success
             success_stats["cmd_id_or_err"] = cmd_id
 
-    hex_mode = (args[1] if len(args) > 1 else state["read-mode"]) == "hex"
+    hex_mode = state["read-mode"] == DataMode.HEX
     stream(state["handle"], hex_mode, state["read-size"], state["timeout"], process_instream)
 
     if not success_stats["success"]:

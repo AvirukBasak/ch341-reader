@@ -1,6 +1,6 @@
 # README
 
-```
+```shell
 # Basic - stream raw bytes at default 115200
 python main.py
 
@@ -18,11 +18,54 @@ python main.py > output.bin
 ```
 
 Alternatively you can use the `shell.py` script for an interactive version. You can use the `write` command to send payloads:
-```
-A0 A1 [size:2B] [payload:size] [cs:1B] 0D 0A
-[size] unit is in bytes, stored big endian
-[cs] is just xor of everything, likely a simple xor checksum
-payload contains actual command, see datasheet
+
+## Interactive Shell
+
+Use `shell.py` for an interactive session:
+
+```shell
+> open
+> write 01 hex sktrq-px
+.........
+^C
+[INFO] shell.py: Interrupted
+[INFO] ACK: command id: 0x1
 ```
 
-To use write, you only need the `[payload]`, rest is set automatically.
+### Write Command
+
+```shell
+write [payload] [write-mode=txt] [write-template=raw]
+```
+
+| Argument | Options | Default |
+|---|---|---|
+| `write-mode` | `txt`, `hex` | `txt` |
+| `write-template` | `raw`, `sktrq-px` | `raw` |
+
+**Examples:**
+
+```shell
+# Reset SkyTraq Phoenix chip (hex payload, sktrq-px framing)
+write 01 hex sktrq-px
+
+# Send a raw text string (escape sequences supported)
+write hello\n
+```
+
+The `sktrq-px` template automatically wraps your `[payload]` in the SkyTraq binary frame:
+```
+A0 A1 [size:2B] [payload] [cs:1B] 0D 0A
+```
+Checksum (simple XOR) `cs` and size are auto-computed.
+
+## Other Commands
+
+```shell
+open [vid:pid] # Default: CH341 VID/PID
+close
+read [read-size] [read-mode]
+set baud 9600
+set read-mode hex
+help
+```
