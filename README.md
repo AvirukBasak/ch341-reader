@@ -6,7 +6,7 @@ A userspace program for directly interfacing with CH340C modules over USB, bypas
 
 Desktop Linux ships with a `ch341` driver - when you connect a device with CH340C over USB, it shows up as `/dev/ttyUSB*`. This hides the USB protocol and exposes a file you can read or write to. Read acts like UART RX, write like TX.
 
-However, Android doesn't have this driver (even on custom ROMs). An app could work, and many support reading from external GNSS (e.g. GPS Connector on Play Store). But none goes a level deeper and configures the SkyTraQ behind. This userspace program fills that gap: it works on both desktop Linux and rooted Android (via Termux), taking direct control over USB using PyUSB (a libusb wrapper for Python). The CH340C implementation itself is ported into Python directly from the Linux kernel's source.
+However, Android doesn't have this driver (even on custom ROMs). This userspace program fills that gap: it works on both desktop Linux and rooted Android (via Termux), taking direct control over USB using PyUSB (a libusb wrapper for Python). The CH340C implementation itself is ported into Python directly from the Linux kernel's source.
 
 ## Why Root Is Necessary
 
@@ -105,7 +105,6 @@ Checksum (simple XOR) `cs` and size are auto-computed.
 - First run `open` after launching `sudo ./shell.py`. This gives a `[pid]:[vid]>` prompt.
 - Run `read`. Press Ctrl+C to stop reading and return to the `[pid]:[vid]>` prompt.
 - On `write`, a read loop starts automatically. ACK / NACK / failure information will show up after you press Ctrl+C.
-- A successful ACK echoes back the leading bytes of your command (e.g. `[INFO] shell.py: ACK payload: 64 02` for a command starting with `64 02`).
 
 ## Example: Enabling `$GNGST` Sentences
 
@@ -130,6 +129,8 @@ write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_00 hex sktrq-px
 # Persistent (written to SkyTraQ FLASH) — last byte 01
 write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_01 hex sktrq-px
 ```
+
+A successful ACK echoes back the leading bytes of your command (e.g. `[INFO] shell.py: ACK payload: 64 02` for a command starting with `64 02`).
 
 The SkyTraQ chip likely has a FLASH to persistently store configs. In the demo above, the ephemeral form is used. For persistence, set the last byte to `01`.
 
