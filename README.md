@@ -1,22 +1,12 @@
-# CH340C GNSS Reader
+# CH340C Reader
 
-A userspace program for directly interfacing with SkyTraQ GNSS modules over USB, bypassing kernel TTY drivers.
+A userspace program for directly interfacing with CH340C modules over USB, bypassing kernel TTY drivers.
 
 ## Why This Approach?
 
 Desktop Linux ships with a `ch341` driver - when you connect a device with CH340C over USB, it shows up as `/dev/ttyUSB*`. This hides the USB protocol and exposes a file you can read or write to. Read acts like UART RX, write like TX.
 
 However, Android doesn't have this driver (even on custom ROMs). An app could work, and many support reading from external GNSS (e.g. GPS Connector on Play Store). But none goes a level deeper and configures the SkyTraQ behind. This userspace program fills that gap: it works on both desktop Linux and rooted Android (via Termux), taking direct control over USB using PyUSB (a libusb wrapper for Python). The CH340C implementation itself is ported into Python directly from the Linux kernel's source.
-
-## GNSS Module Overview
-
-The GNSS module has 3 layers in general:
-
-1. **The Antenna** — the large ceramic patch antenna (possibly)
-2. **SkyTraQ GNSS MCU** — processes the GNSS signals, produces NMEA sentences
-3. **CH340C UART-USB** — takes NMEA from the MCU and exposes a USB interface for a PC
-
-The SkyTraQ MCU has its own binary protocol. You can send these commands over USB, going via the CH340C chip. This program handles the framing for you (see `sktrq-px` below).
 
 ## Why Root Is Necessary
 
@@ -117,7 +107,19 @@ Checksum (simple XOR) `cs` and size are auto-computed.
 - On `write`, a read loop starts automatically. ACK / NACK / failure information will show up after you press Ctrl+C.
 - A successful ACK echoes back the leading bytes of your command (e.g. `[INFO] shell.py: ACK payload: 64 02` for a command starting with `64 02`).
 
-### Example: Enabling `$GNGST` Sentences
+## Example: Enabling `$GNGST` Sentences
+
+### Module Overview
+
+The GNSS module has 3 layers in general:
+
+1. **The Antenna** — the large ceramic patch antenna (possibly)
+2. **SkyTraQ GNSS MCU** — processes the GNSS signals, produces NMEA sentences
+3. **CH340C UART-USB** — takes NMEA from the MCU and exposes a USB interface for a PC
+
+The SkyTraQ MCU has its own binary protocol. You can send these commands over USB, going via the CH340C chip. This program handles the framing for you (see `sktrq-px` below).
+
+### Example
 
 `$GNGST` reports error statistics directly from the GNSS receiver. Position error is generally CEP, measured in meters — a circle within which 50% of fixes land. The error is the circle's radius. A larger circle is worse.
 
