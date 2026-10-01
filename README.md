@@ -101,26 +101,25 @@ Checksum (simple XOR) `cs` and size are auto-computed.
 
 ### Reading the Output
 
-- Anything starting with `[INFO]` is from the program. Anything starting with `$` is from the module. Any `>` prompt is to give a command to the program.
+- Anything starting with `[INFO]` or `[ERROR]` is from the program. Any `>` prompt is to give a command to the program.
 - First run `open` after launching `sudo ./shell.py`. This gives a `[pid]:[vid]>` prompt.
 - Run `read`. Press Ctrl+C to stop reading and return to the `[pid]:[vid]>` prompt.
 - On `write`, a read loop starts automatically. ACK / NACK / failure information will show up after you press Ctrl+C.
+- ACKs are dependent on the UART device and for now is implemented only for the `sktrq-px` write template.
 
 ## Example: Enabling `$GNGST` Sentences
 
-### Module Overview
-
-The GNSS module has 3 layers in general:
+The SkyTraQ Phoenix GNSS module we worked with has 3 layers in general:
 
 1. **The Antenna** — the large ceramic patch antenna (possibly)
-2. **SkyTraQ GNSS MCU** — processes the GNSS signals, produces NMEA sentences
+2. **SkyTraQ GNSS MCU** — processes the GNSS signals, produces NMEA sentences, communicates via UART.
 3. **CH340C UART-USB** — takes NMEA from the MCU and exposes a USB interface for a PC
 
 The SkyTraQ MCU has its own binary protocol. You can send these commands over USB, going via the CH340C chip. This program handles the framing for you (see `sktrq-px` below).
 
 ### Example
 
-`$GNGST` reports error statistics directly from the GNSS receiver. Position error is generally CEP, measured in meters — a circle within which 50% of fixes land. The error is the circle's radius. A larger circle is worse.
+`$GNGST` reports error statistics directly from the GNSS receiver. Position error is generally CEP, measured in meters - a circle within which 50% of fixes land. The error is the circle's radius. A larger circle is worse.
 
 ```shell
 # Ephemeral (lost on power cycle) — last byte 00
@@ -130,7 +129,4 @@ write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_00 hex sktrq-px
 write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_01 hex sktrq-px
 ```
 
-A successful ACK echoes back the leading bytes of your command (e.g. `[INFO] shell.py: ACK payload: 64 02` for a command starting with `64 02`).
-
-The SkyTraQ chip likely has a FLASH to persistently store configs. In the demo above, the ephemeral form is used. For persistence, set the last byte to `01`.
-
+A successful ACK echoes back the message IDs of the command (e.g. `[INFO] shell.py: ACK payload: 64 02` for a `64 02` command.
