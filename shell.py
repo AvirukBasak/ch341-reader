@@ -18,9 +18,11 @@ set debug     [0|1]
 read  [read-size=None] [read-mode=None]
 write [payload]        [write-mode=txt] [write-template=raw]
 
-list
-open vid:pid
-close
+load [path/to/driver.py] - Load a template driver
+lsdrv                    - Lists loaded drivers
+open vid:pid             - Open a non-default device
+close                    - Release device to OS
+cls                      - CLear screen
 
 Supported Read and Write Modes:
 - read-mode:  txt - Standard text output
@@ -28,9 +30,13 @@ Supported Read and Write Modes:
 - write-mode: txt - Parse as Python bytes string, spaces unsupported
 - read-mode:  hex - Parse as hex number, same endian as input
 
-Supported Write Templates:
-- raw      - Exact bytes
-- sktrq-px - SkyTraq Phoenix GNSS receiver
+Driver Modules:
+- A driver handles payloads for the system behind the C341
+- Stock drivers defined in "drivers/*.py"
+- User of this program can define their own anywhere
+- A driver definition requires CH341RDR_NAME = "..." (see drivers/raw.py)
+- Also requires several functions (also see drivers/raw.py)
+- write-template takes CH341RDR_NAME and calls the right functions
 """
 
 import ast
@@ -39,8 +45,9 @@ import logging
 import sys
 import os
 import re
+import importlib.util
 
-from ch341 import (
+from modules.ch341 import (
     CH341_VENDOR_ID,
     CH341_PRODUCT_ID,
     CH341_DEFAULT_BAUDRATE,
@@ -66,14 +73,25 @@ log = logging.getLogger(os.path.basename(__file__))
 
 NONE = "None"
 
-class WriteTemplate(str, Enum):
-    RAW      = "raw"
-    SKTRQ_PX = "sktrq-px"
+class WriteTemplate:
+    RAW = "raw"
 
-WRITE_TEMPLATES = [WriteTemplate.RAW, WriteTemplate.SKTRQ_PX]
+WRITE_TEMPLATES = [WriteTemplate.RAW]
 
 
-class DataMode(str, Enum):
+class TemplateDriverFields:
+    VAR_NAMESTR = "CH341RDR_NAME"
+    FN_WRITE    = "ch341rdr_write"
+    FN_ONWRITE  = "ch341rdr_onwrite"
+
+TEMPLATE_DRIVER_REQURIED_FIELDS = [
+    TemplateDriverFields.VAR_NAMESTR,
+    TemplateDriverFields.FN_WRITE,
+    TemplateDriverFields.FN_ONWRITE
+]
+
+
+class DataMode:
     HEX = "hex"
     TXT = "txt"
 
@@ -93,6 +111,7 @@ state = {
     "handle":    None,
     "vid":       CH341_VENDOR_ID,
     "pid":       CH341_PRODUCT_ID,
+    "drivers":   {}
 }
 
 GETTABLE = {"baud", "read-size", "read-mode", "timeout", "debug"}
@@ -111,7 +130,21 @@ SET_PARSERS = {
 # Read / stream Loop
 # ---------------------------------------------------------------------------
 
-def stream(handle, hex_mode: bool, read_size: int, timeout: int, process_instream = lambda resp: None) -> None:
+def read_once(handle, hex_mode: bool, read_size: int, timeout: int) -> str | bytes | None:
+    try:
+        data = ch341_read(handle, size=read_size, timeout=timeout)
+    except OSError as e:
+        log.error("read error: %s", e)
+        data = None
+    if not data:
+        # data empty? return None
+        return None
+    if hex_mode:
+        data = " ".join(f'{b:02x}' for b in data)
+    return data
+
+
+def read_streaming(handle, hex_mode: bool, read_size: int, timeout: int, process_instream = lambda resp: None) -> None:
     log.info("Streaming - press Ctrl-C to exit")
     out = sys.stdout.buffer if not hex_mode else None
     try:
@@ -172,6 +205,62 @@ def cmd_set(args):
     log.info(f"{key} = {state[key]}")
 
 
+def cmd_load(args) -> bool:
+    if not args:
+        log.error("missing args, usage: load [path/to/driver.py], no spaces")
+        return False
+
+    path = args[0]
+    spec = importlib.util.spec_from_file_location("_ch341_driver", path)
+
+    if spec is None:
+        log.error("failed to load '%s', `spec` is none", path)
+        return False
+    if spec.loader is None:
+        log.error("failed to load '%s', `spec.loader` is none", path)
+        return False
+
+    # load driver.py python module
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        log.error("failed to load '%s', %s", path, e)
+        return False
+
+    # check for missing fields
+    for field in TEMPLATE_DRIVER_REQURIED_FIELDS:
+        if not hasattr(mod, field):
+            log.error("failed to load '%s', missing required '%s'", path, field)
+            return False
+
+    # get driver name
+    name = getattr(mod, TemplateDriverFields.VAR_NAMESTR, None)
+    if not name or not isinstance(name, str):
+        log.error("failed to load '%s', missing '%s'",
+                  path, TemplateDriverFields.VAR_NAMESTR)
+        return False
+
+    if name in state["drivers"]:
+        state["drivers"][name] = mod
+        log.info("reloaded '%s', driver name = '%s'", path, name)
+    else:
+        state["drivers"][name] = mod
+        log.info("loaded '%s', driver name = '%s'", path, name)
+    return True
+
+
+def cmd_lsdrv(_args):
+    if not state["drivers"]:
+        log.info("no drivers loaded")
+        return
+    for name, mod in state["drivers"].items():
+        has_write   = hasattr(mod, TemplateDriverFields.FN_WRITE)
+        has_onwrite = hasattr(mod, TemplateDriverFields.FN_ONWRITE)
+        log.info("%-20s write=%-5s onwrite=%-5s path=%s",
+                 name, has_write, has_onwrite, getattr(mod, "__file__", "?"))
+
+
 def cmd_read(args):
     if state["handle"] is None:
         log.error("no device open")
@@ -184,35 +273,8 @@ def cmd_read(args):
         log.error(f"{e}")
         return
 
-    hex_mode  = read_mode == DataMode.HEX
-    stream(state["handle"], hex_mode, read_size, state["timeout"])
-
-
-def parse_skytraq_px_ack(frame: bytes) -> tuple[bool, str | None]:
-    """
-    Returns a tuple. First member if true implies success else
-    second member contains parsing error string. On success, 2nd
-    member if None implies NACK else successful ACK.
-    """
-    # Scan for start sequence in case there's leading NMEA noise
-    idx = frame.find(b'\xA0\xA1')
-    if idx == -1:
-        return False, f"start sequence xA0 xA1 not found"
-
-     # a0 a1 [size:2B] [type:1B] [payload?] [cs:1B] 0d 0a (assume minimum payload of 1B)
-    if len(frame) < 9:
-        return False, f"response too short: {frame.hex()}"
-
-    ack_payload_size = int.from_bytes(frame[2:4], 'big')
-    ack_type         = frame[4] # 0x83 = ACK, 0x84 = NACK
-    ack_payload      = frame[5 : 5 + ack_payload_size - 1] # size includes ack_type, so -1
-
-    if ack_type == 0x83: # ACK
-        return True, ' '.join(f'{b:02x}' for b in ack_payload)
-    elif ack_type == 0x84: # NACK
-        return True, None
-    else:
-        return False, f"unexpected response: {frame.hex()}"
+    hex_mode = read_mode == DataMode.HEX
+    read_streaming(state["handle"], hex_mode, read_size, state["timeout"])
 
 
 def cmd_write(args):
@@ -225,82 +287,52 @@ def cmd_write(args):
         return
 
     try:
-        write_mode     = SET_PARSERS["write-mode"]    (args[1]) if len(args) > 1 and args[1] != NONE else DataMode.TXT
-        write_template = SET_PARSERS["write-template"](args[2]) if len(args) > 2 and args[2] != NONE else WriteTemplate.RAW
+        write_mode     = SET_PARSERS["write-mode"] (args[1]) if len(args) > 1 and args[1] != NONE else DataMode.TXT
+        write_template = args[2]                             if len(args) > 2 and args[2] != NONE else WriteTemplate.RAW
     except ValueError as e:
         log.error(f"{e}")
         return
 
     if write_mode == DataMode.HEX:
         try:
-            payload = bytes.fromhex(args[0].replace("_", ""))
+            parsed_userdata = bytes.fromhex(args[0].replace("_", ""))
         except ValueError as e:
             log.error(f"invalid hex: {e}")
             return
     else: # txt
-        payload = ast.literal_eval(f'b"{args[0]}"')
-    size = len(payload)
+        parsed_userdata = ast.literal_eval(f'b"{args[0]}"')
 
-    if write_template == WriteTemplate.RAW:
-        data = payload
-    elif write_template == WriteTemplate.SKTRQ_PX:
-        cs = 0
-        for b in payload: cs ^= b
-        # A0 A1 [size:2B] [payload:size] [cs:1B] 0D 0A
-        # [size] unit is in bytes, stored big endian
-        # [cs] is just xor of everything, likely a simple xor checksum
-        # payload contains actual command, see datasheet
-        data = (
-            bytes([0xA0, 0xA1]) +
-            size.to_bytes(2, 'big') +
-            bytes(payload) +
-            bytes([cs, 0x0D, 0x0A])
-        )
-    else:
-        log.error(f"unknown template: {write_template}")
+    driver = state["drivers"].get(write_template)
+    if driver is None:
+        log.error("unknown template '%s', did you load its driver?", write_template)
+        return
+    try:
+        wire_data = driver.ch341rdr_write(parsed_userdata)
+        ch341_write(state["handle"], wire_data)
+        log.debug("wrote %d bytes", len(wire_data))
+    except Exception as e:
+        log.error("driver-side write error: %s", e)
         return
 
-    ch341_write(state["handle"], data)
+    def read_fn(
+        hex_mode: bool = state["read-mode"] == DataMode.HEX,
+        read_size: int = state["read-size"],
+        timeout: int = state["timeout"]
+    ):
+        return read_once(state["handle"], hex_mode, read_size, timeout)
 
-    # attempt get an ACK, may need to read through some bytes for this
-    success_stats = {
-        "success":       False,
-        "cmd_id_or_err": None,
-        "fails_count":   0,
-        "fails_max":     10
-    }
+    def stream_fn(
+        hex_mode: bool = state["read-mode"] == DataMode.HEX,
+        read_size: int = state["read-size"],
+        timeout: int = state["timeout"],
+        process_instream = lambda r: None
+    ):
+        return read_streaming(state["handle"], hex_mode, read_size, timeout, process_instream)
 
-    def process_instream(resp):
-        if write_template == WriteTemplate.RAW:
-            success_stats["success"] = True
-            success_stats["cmd_id_or_err"] = "Unsupported Device"
-            return
-        # this fn gets called for every stream loop, if onces ACK/NACK found, this needs not run
-        if success_stats["success"]: return
-        # call parser once
-        parse_success, cmd_id = parse_skytraq_px_ack(resp)
-        # parse failed, return but increment the counter
-        if not parse_success:
-            success_stats["fails_count"] += 1
-            # if count exceeds threshold, raise to have stream function return (simulate a Ctrl+C)
-            if success_stats["fails_count"] > success_stats["fails_max"]:
-                raise KeyboardInterrupt()
-            # else let stream continue reading data
-            return
-        else:
-            # on success: these will be used outside stream
-            success_stats["success"] = parse_success
-            success_stats["cmd_id_or_err"] = cmd_id
-
-    hex_mode = state["read-mode"] == DataMode.HEX
-    stream(state["handle"], hex_mode, state["read-size"], state["timeout"], process_instream)
-
-    if not success_stats["success"]:
-        log.error(f"parse failed: {success_stats["cmd_id_or_err"]}")
-    elif success_stats["cmd_id_or_err"]:
-        log.info(f"ACK payload: {success_stats["cmd_id_or_err"]}")
-    else:
-        log.error("NACK: command rejected")
+    try:
+        driver.ch341rdr_onwrite(stream_fn, read_fn)
+    except Exception as e:
+        log.error("driver-side onwrite error: %s", e)
 
 
 def cmd_list(_args):
@@ -371,6 +403,8 @@ COMMANDS = {
     "get":   cmd_get,
     "set":   cmd_set,
     "read":  cmd_read,
+    "load":  cmd_load,
+    "lsdrv": cmd_lsdrv,
     "write": cmd_write,
     "list":  cmd_list,
     "open":  cmd_open,
@@ -385,7 +419,18 @@ COMMANDS = {
 # Entry point
 # ---------------------------------------------------------------------------
 
+def load_stock_drivers() -> bool:
+    stat_raw = cmd_load(["drivers/raw.py"])
+    stat_px = cmd_load(["drivers/PX1125S01A.py"])
+    return stat_raw and stat_px
+
+
 def main() -> None:
+    stat = load_stock_drivers()
+    if not stat:
+        log.error("failed to load stock drivers, exiting")
+        return
+
     while True:
         try:
             device = ">" if state["handle"] is None else f"{state["vid"]:02x}:{state["pid"]:02x}"

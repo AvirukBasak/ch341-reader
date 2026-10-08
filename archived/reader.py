@@ -18,7 +18,7 @@ import logging
 import sys
 import os
 
-from ch341 import (
+from modules.ch341 import (
     CH341_VENDOR_ID,
     CH341_PRODUCT_ID,
     CH341_DEFAULT_BAUDRATE,
@@ -43,7 +43,7 @@ log = logging.getLogger(os.path.basename(__file__))
 # Read / stream Loop
 # ---------------------------------------------------------------------------
 
-def stream(handle, hex_mode: bool, read_size: int, timeout: int, process_instream = lambda resp: None) -> None:
+def read_streaming(handle, hex_mode: bool, read_size: int, timeout: int, process_instream = lambda resp: None) -> None:
     log.info("Streaming - press Ctrl-C to exit")
     out = sys.stdout.buffer if not hex_mode else None
     try:
@@ -81,7 +81,7 @@ def run(handle, hex_mode: bool, read_size: int, timeout: int) -> None:
     hex_mode=True  →  "de ad be ef  " style hex dump per line
     hex_mode=False →  raw bytes written directly (pass-through)
     """
-    stream(handle, hex_mode, read_size, timeout)
+    read_streaming(handle, hex_mode, read_size, timeout)
 
 
 # ---------------------------------------------------------------------------

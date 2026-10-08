@@ -23,23 +23,25 @@ pip install pyusb   # the only dependency
 sudo ./shell.py     # needs root to directly access USB device
 ```
 
-## Usage — `main.py`
+## Usage - `archived/reader.py`
+
+NOTE: This is the old reader. Use the interactive reader (see below).
 
 ```shell
 # Basic - stream raw bytes at default 115200
-python main.py
+python archived/reader.py
 
 # Different baud rate
-python main.py --baud 9600
+python archived/reader.py --baud 9600
 
 # Hex dump mode (one line of "de ad be ef" per read)
-python main.py --hex
+python archived/reader.py --hex
 
 # Non-default VID/PID, with debug logging
-python main.py --vid 0x1a86 --pid 0x7522 --debug
+python archived/reader.py --vid 0x1a86 --pid 0x7522 --debug
 
 # Pipe raw output to a file
-python main.py > output.bin
+python archived/reader.py > output.bin
 ```
 
 ## Interactive Shell
@@ -73,60 +75,81 @@ help                         # List of commands
 write [payload] [write-mode=txt] [write-template=raw]
 ```
 
-| Argument | Options | Default |
-|---|---|---|
-| `write-mode` | `txt`, `hex` | `txt` |
-| `write-template` | `raw`, `sktrq-px` | `raw` |
+| Argument         | Options                           | Default |
+|------------------|-----------------------------------|---------|
+| `write-mode`     | `txt`, `hex`                      | `txt`   |
+| `write-template` | `raw` or user defined driver name | `raw`   |
 
 **Examples:**
 
+Send a text string (escape sequences supported)
+
 ```shell
-# Reset SkyTraq Phoenix chip (hex payload, sktrq-px for protocol frame)
-write 01 hex sktrq-px
-
-# Send a text string (escape sequences supported)
 write hello\n
+```
 
-# Send bytes, no protocol, so `raw` (_ is ignored, allowed for readability)
+Send bytes, no protocol, so `raw` (_ is ignored, allowed for readability)
+
+```shell
 write 0a_0b_0c_0d_0e_0f hex raw
 ```
 
-The `sktrq-px` template automatically wraps your `[payload]` in the SkyTraQ binary frame:
+Reset PX1125S-01A chip (hex payload, use `phoenix` for protocol frame). This chip
+has stock support.
 
+```shell
+write 01 hex phoenix
 ```
-A0 A1 [size:2B] [payload] [cs:1B] 0D 0A
-```
-
-Checksum (simple XOR) `cs` and size are auto-computed.
 
 ### Reading the Output
 
 - Anything starting with `[INFO]` or `[ERROR]` is from the program. Any `>` prompt is to give a command to the program.
-- First run `open` after launching `sudo ./shell.py`. This gives a `[pid]:[vid]>` prompt.
-- Run `read`. Press Ctrl+C to stop reading and return to the `[pid]:[vid]>` prompt.
+- First run `open` after launching `sudo ./shell.py`. This gives a `[vid]:[pid]>` prompt.
+- Run `read`. Press Ctrl+C to stop reading and return to the `[vid]:[pid]>` prompt.
 - On `write`, a read loop starts automatically. ACK / NACK / failure information will show up after you press Ctrl+C.
-- ACKs are dependent on the UART device and for now is implemented only for the `sktrq-px` write template.
+- ACKs are dependent on the UART device and are implemented by user defined driver (see `drivers/*.py`).
+
+### Driver System
+
+Write templates are handled by driver modules. All drivers are loaded from `.py` files.
+
+```shell
+load drivers/phoenix.py   # load a driver
+lsdrv                     # list loaded drivers
+```
+
+Stock drivers ship in `drivers/` and get auto-loaded on start:
+
+| Driver file             | `CH341RDR_NAME` | Device                            |
+|-------------------------|-----------------|-----------------------------------|
+| `drivers/raw.py`        | `raw`           | Pass-through, no framing          |
+| `drivers/PX1125S01A.py` | `phoenix`       | SkyTraQ PX1125S-01A GNSS receiver |
+
+Stock drivers are loaded automatically on startup. To write a custom driver, see `drivers/raw.py`
+for the required exports (`CH341RDR_NAME`, `ch341rdr_write`, `ch341rdr_onwrite`).
+
+NOTE: To disable a stock driver, edit the function: `shell.py -> load_stock_drivers()`.
 
 ## Example: Enabling `$GNGST` Sentences
 
 The GNSS receiver module we worked with has 3 layers in general:
 
-1. **The Antenna** — the large ceramic patch antenna (possibly)
-2. **SkyTraQ PX1125S-01A  MCU** — processes the GNSS signals, produces NMEA sentences, communicates via UART.
-3. **CH340C UART-USB** — takes NMEA from the MCU and exposes a USB interface for a PC
+1. **The Antenna** - the large ceramic patch antenna (possibly)
+2. **SkyTraQ PX1125S-01A  MCU** - a.k.a "phoenix", processes the GNSS signals, produces NMEA sentences, communicates via UART.
+3. **CH340C UART-USB** - takes NMEA from the MCU and exposes a USB interface for a PC
 
-The SkyTraQ MCU has its own binary protocol. You can send these commands over USB, going via the CH340C chip. This program handles the framing for you (see `sktrq-px` below).
+The MCU has its own binary protocol. You can send these commands over USB, going via the CH340C chip. This program handles the framing for you.
 
 ### Example
 
 `$GNGST` reports error statistics directly from the GNSS receiver. Position error is generally CEP, measured in meters - a circle within which 50% of fixes land. The error is the circle's radius. A larger circle is worse.
 
 ```shell
-# Ephemeral (lost on power cycle) — last byte 00
-write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_00 hex sktrq-px
+# Ephemeral (lost on power cycle), last byte 00
+write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_00 hex phoenix
 
-# Persistent (written to SkyTraQ FLASH) — last byte 01
-write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_01 hex sktrq-px
+# Persistent (written to FLASH), last byte 01
+write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_01 hex phoenix
 ```
 
-A successful ACK echoes back the message IDs of the command (e.g. `[INFO] shell.py: ACK payload: 64 02` for a `64 02` command.
+A successful ACK echoes back the message IDs of the command (e.g. `[INFO] shell.py: ACK payload: 64 02` for a `64 02` command).

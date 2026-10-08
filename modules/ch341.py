@@ -26,7 +26,7 @@ import os
 import signal
 import sys
 
-from usb_compat import (
+from modules.usb import (
     GFP_KERNEL,
     USB_DIR_IN,
     USB_DIR_OUT,
