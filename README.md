@@ -109,10 +109,10 @@ Checksum (simple XOR) `cs` and size are auto-computed.
 
 ## Example: Enabling `$GNGST` Sentences
 
-The SkyTraQ Phoenix GNSS module we worked with has 3 layers in general:
+The GNSS receiver module we worked with has 3 layers in general:
 
 1. **The Antenna** — the large ceramic patch antenna (possibly)
-2. **SkyTraQ GNSS MCU** — processes the GNSS signals, produces NMEA sentences, communicates via UART.
+2. **SkyTraQ PX1125S-01A  MCU** — processes the GNSS signals, produces NMEA sentences, communicates via UART.
 3. **CH340C UART-USB** — takes NMEA from the MCU and exposes a USB interface for a PC
 
 The SkyTraQ MCU has its own binary protocol. You can send these commands over USB, going via the CH340C chip. This program handles the framing for you (see `sktrq-px` below).
