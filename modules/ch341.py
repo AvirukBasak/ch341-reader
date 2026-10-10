@@ -20,11 +20,8 @@ interface. In all cases the CH341 supports an I2C interface as well.
 This driver only supports the asynchronous serial interface.
 """
 
-import atexit
 import logging
 import os
-import signal
-import sys
 
 from modules.usb import (
     GFP_KERNEL,
@@ -581,12 +578,6 @@ def ch341_open(vendor_id: int = CH341_VENDOR_ID,
         usb_release_interface(udev, 0)
         raise OSError(-r, f"ch341_detect_quirks failed: {r}")
 
-    # Register cleanup on normal interpreter exit and on SIGINT / SIGTERM
-    # Disabled SIGINT coz we let the shell.py handle it
-    atexit.register(_ch341_cleanup_handle, handle)
-    # signal.signal(signal.SIGINT,  _ch341_signal_handler)
-    signal.signal(signal.SIGTERM, _ch341_signal_handler)
-
     mps = usb_get_max_packet_size(udev, _CH341_BULK_IN_EP)
     log.info("CH341 device opened (version 0x%02x, baud %d, bulk IN max packet size %d)",
              priv.version, priv.baud_rate, mps)
@@ -643,21 +634,6 @@ def ch341_reset_resume(handle: CH341Device) -> int:
     if r < 0:
         log.error("failed to read modem status: %d", r)
     return r
-
-# ---------------------------------------------------------------------------
-# Interrupt / signal handlers - ensure device is released on exit
-# ---------------------------------------------------------------------------
-
-_open_handles: list = []   # weak registry so atexit can clean up
-
-def _ch341_cleanup_handle(handle: CH341Device) -> None:
-    ch341_close(handle)
-
-
-def _ch341_signal_handler(signum, frame):
-    log.info("Signal %d received - closing CH341 device(s)", signum)
-    # atexit handlers fire on sys.exit()
-    sys.exit(0)
 
 
 __all__ = [

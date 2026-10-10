@@ -40,8 +40,8 @@ Driver Modules:
 """
 
 import ast
-from enum import Enum
 import logging
+import signal
 import sys
 import os
 import re
@@ -56,7 +56,7 @@ from modules.ch341 import (
     ch341_close,
     ch341_read,
     ch341_write,
-    ch341_carrier_raised,
+    ch341_carrier_raised
 )
 
 logging.basicConfig(
@@ -419,6 +419,35 @@ COMMANDS = {
 # Entry point
 # ---------------------------------------------------------------------------
 
+SIGNALS_MUST_CONTINUE = [
+    signal.SIGHUP,   # Terminal close / daemon reload attempts
+]
+
+def continue_signal_handler(signum, frame):
+    print(file=sys.stdout)
+    log.info("Signal %d received, continuing execution", signum)
+
+
+SIGNALS_MUST_STOP = [
+    signal.SIGTERM,  # Terminate
+    signal.SIGQUIT,  # Apparently used for debugging
+    signal.SIGPIPE,  # Broken pipe
+]
+
+def stop_signal_handler(signum, frame):
+    print(file=sys.stdout)
+    log.info("Signal %d received, releasing device...", signum)
+    ch341_close(state["handle"])
+    log.info("Done")
+
+
+def register_signal_handlers():
+    for sig in SIGNALS_MUST_CONTINUE:
+        signal.signal(sig, continue_signal_handler)
+    for sig in SIGNALS_MUST_STOP:
+        signal.signal(sig, stop_signal_handler)
+
+
 def load_stock_drivers() -> bool:
     stat_raw = cmd_load(["drivers/raw.py"])
     stat_px = cmd_load(["drivers/PX1125S01A.py"])
@@ -426,7 +455,10 @@ def load_stock_drivers() -> bool:
 
 
 def main() -> None:
+    register_signal_handlers()
+
     stat = load_stock_drivers()
+
     if not stat:
         log.error("failed to load stock drivers, exiting")
         return

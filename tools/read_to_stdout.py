@@ -15,8 +15,10 @@ Depends on:
 
 import argparse
 import logging
+import signal
 import sys
 import os
+from typing import Any
 
 from modules.ch341 import (
     CH341_VENDOR_ID,
@@ -29,15 +31,18 @@ from modules.ch341 import (
     ch341_carrier_raised,
 )
 
+
 # ---------------------------------------------------------------------------
 # Logging - show INFO and above on stderr so stdout stays clean data output
 # ---------------------------------------------------------------------------
+
 logging.basicConfig(
     stream=sys.stderr,
     level=logging.INFO,
     format="[%(levelname)s] %(name)s: %(message)s",
 )
 log = logging.getLogger(os.path.basename(__file__))
+
 
 # ---------------------------------------------------------------------------
 # Read / stream Loop
@@ -74,21 +79,44 @@ def read_streaming(handle, hex_mode: bool, read_size: int, timeout: int, process
             log.info("Interrupted")
 
 
-def run(handle, hex_mode: bool, read_size: int, timeout: int) -> None:
-    """
-    Block-read from the device forever, printing to stdout.
-
-    hex_mode=True  →  "de ad be ef  " style hex dump per line
-    hex_mode=False →  raw bytes written directly (pass-through)
-    """
-    read_streaming(handle, hex_mode, read_size, timeout)
-
-
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
+state: dict[str, Any] = { "handle": None }
+
+SIGNALS_MUST_CONTINUE = [
+    signal.SIGHUP,   # Terminal close / daemon reload attempts
+]
+
+def continue_signal_handler(signum, frame):
+    print(file=sys.stdout)
+    log.info("Signal %d received, continuing execution", signum)
+
+
+SIGNALS_MUST_STOP = [
+    signal.SIGTERM,  # Terminate
+    signal.SIGQUIT,  # Apparently used for debugging
+    signal.SIGPIPE,  # Broken pipe
+]
+
+def stop_signal_handler(signum, frame):
+    print(file=sys.stdout)
+    log.info("Signal %d received, releasing device...", signum)
+    ch341_close(state["handle"])
+    log.info("Done")
+
+
+def register_signal_handlers():
+    for sig in SIGNALS_MUST_CONTINUE:
+        signal.signal(sig, continue_signal_handler)
+    for sig in SIGNALS_MUST_STOP:
+        signal.signal(sig, stop_signal_handler)
+
+
 def main() -> None:
+    register_signal_handlers()
+
     parser = argparse.ArgumentParser(
         description="CH341 USB serial monitor - streams device output to stdout",
     )
@@ -144,7 +172,7 @@ def main() -> None:
         args.vid, args.pid, args.baud,
     )
     try:
-        handle = ch341_open(
+        state["handle"] = ch341_open(
             vendor_id=args.vid,
             product_id=args.pid,
             baud_rate=args.baud,
@@ -154,23 +182,17 @@ def main() -> None:
         sys.exit(1)
 
     # -- Report initial modem status -----------------------------------------
-    if ch341_carrier_raised(handle):
+    if ch341_carrier_raised(state["handle"]):
         log.info("Carrier detected (DCD asserted)")
     else:
         log.info("No carrier (DCD not asserted)")
 
     # -- Stream --------------------------------------------------------------
-    try:
-        run(handle, args.hex_mode, args.read_size, args.timeout)
-    except KeyboardInterrupt:
-        # Ctrl-C: fall through to clean shutdown below
-        print(file=sys.stderr)   # newline after ^C on terminal
-        log.info("Interrupted")
-    finally:
-        # Always release the device, even if an exception propagates
-        log.info("Releasing device...")
-        ch341_close(handle)
-        log.info("Done")
+    read_streaming(state["handle"], args.hex_mode, args.read_size, args.timeout)
+
+    log.info("Releasing device...")
+    ch341_close(state["handle"])
+    log.info("Done")
 
 
 if __name__ == "__main__":
