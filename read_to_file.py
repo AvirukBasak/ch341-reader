@@ -4,7 +4,7 @@
 Usage:
     python read_to_file.py -p [prefix] -s [suffix] -e [ext]
 
-Reads data continuously from the SkyTraQ PX1125S-01A via CH341
+Reads data continuously from the device via CH341
 and appends it to a file. Automatically switches to a new file
 at the end of the hour. File name is of the format:
 

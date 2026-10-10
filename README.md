@@ -23,9 +23,7 @@ pip install pyusb   # the only dependency
 sudo ./shell.py     # needs root to directly access USB device
 ```
 
-## Usage - `archived/reader.py`
-
-NOTE: This is the old reader. Use the interactive reader (see below).
+## Usage - `read_to_stdout.py`
 
 ```shell
 # Basic - stream raw bytes at default 115200
@@ -42,6 +40,37 @@ python archived/reader.py --vid 0x1a86 --pid 0x7522 --debug
 
 # Pipe raw output to a file
 python archived/reader.py > output.bin
+```
+
+## Usage - `read_to_file.py`
+
+Reads data continuously from the device via CH341 and writes to
+hourly files. Automatically switches to a new file at the top of each hour.
+
+```shell
+# Basic - write raw bytes to timestamped files
+python tools/read_to_file.py
+
+# With prefix and suffix
+python tools/read_to_file.py -p mydevice -s raw
+
+# With extension
+python tools/read_to_file.py -p gps -e bin
+
+# All three - produces e.g. gps-2026.10.11-02.48.41-raw.bin
+python tools/read_to_file.py -p gps -s raw -e bin
+
+# Hex dump mode
+python tools/read_to_file.py -p gps -e hex --hex
+
+# Different baud rate
+python tools/read_to_file.py --baud 9600
+
+# Non-default VID/PID, with debug logging
+python tools/read_to_file.py --vid 0x1a86 --pid 0x7522 --debug
+
+# Stop gracefully (flushes and closes current file)
+kill -SIGTERM <pid> # You can also use Ctrl+C or SIGINT
 ```
 
 ## Interactive Shell
