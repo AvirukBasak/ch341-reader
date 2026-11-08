@@ -79,11 +79,11 @@ Use `shell.py` for an interactive session. This command restarts the chip.
 
 ```shell
 > open
-> write 01 hex sktrq-px
+> write 01 hex phoenix
 .........
 ^C
 [INFO] shell.py: Interrupted
-[INFO] ACK: command id: 0x1
+[INFO] PX1125S01A.py: ACK: 83 01
 ```
 
 ### Main Commands
@@ -181,4 +181,12 @@ write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_00 hex phoenix
 write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_01 hex phoenix
 ```
 
-A successful ACK echoes back the message IDs of the command (e.g. `[INFO] shell.py: ACK payload: 64 02` for a `64 02` command).
+A successful ACK echoes back the command ID (for a `64 02` command):
+```
+[INFO] PX1125S01A.py: ACK: 83 64 02
+```
+
+A NACK looks the same but with a leading `84` byte:
+```
+[INFO] PX1125S01A.py: NACK: 84 64 02
+```

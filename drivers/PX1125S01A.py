@@ -14,31 +14,58 @@ log = logging.getLogger(os.path.basename(__file__))
 CH341RDR_NAME = "phoenix"
 
 
-def __ch341rdr_phoenix_parse_ack(frame: bytes) -> tuple[bool, str | None]:
-    """
-    Returns a tuple. First member if true implies success else
-    second member contains parsing error string. On success, 2nd
-    member if None implies NACK else successful ACK.
-    """
-    # Scan for start sequence in case there's leading NMEA noise
-    idx = frame.find(b'\xA0\xA1')
-    if idx == -1:
-        return False, f"start sequence xA0 xA1 not found"
+def __ch341rdr_phoenix_output_type_mapper(payload: bytes) -> str:
+    if len(payload) >= 1 and payload[0] == 0x83: return "ACK"
+    if len(payload) >= 1 and payload[0] == 0x84: return "NACK"
 
-     # a0 a1 [size:2B] [type:1B] [payload?] [cs:1B] 0d 0a (assume minimum payload of 1B)
-    if len(frame) < 9:
-        return False, f"response too short: {frame.hex()}"
+    if len(payload) >= 2 and payload[0] == 0x64 and payload[1] == 0x8C: return "Constellations"
+    if len(payload) >= 2 and payload[0] == 0x64 and payload[1] == 0x03: return "Sentence Intervals"
 
-    ack_payload_size = int.from_bytes(frame[2:4], 'big')
-    ack_type         = frame[4] # 0x83 = ACK, 0x84 = NACK
-    ack_payload      = frame[5 : 5 + ack_payload_size - 1] # size includes ack_type, so -1
+    return "O/P"
 
-    if ack_type == 0x83: # ACK
-        return True, ' '.join(f'{b:02x}' for b in ack_payload)
-    elif ack_type == 0x84: # NACK
-        return True, None
-    else:
-        return False, f"unexpected response: {frame.hex()}"
+
+def __ch341rdr_phoenix_parse_output(response: bytes) -> list[tuple[str,str]]:
+    results = []
+    cursor = 0
+
+    while True:
+        # Extract a frame ------------------------------------------------------
+
+        # Scan for start sequence in case there's leading NMEA noise
+        start_idx = response.find(b'\xA0\xA1', cursor)
+        # Start sequence missing -> all frames handled, exit
+        if start_idx == -1: break
+    
+        # Also find the end sequence after the start sequence
+        end_idx = response.find(b'\x0D\x0A', start_idx)
+        # End sequence missing -> all frames that could end handled, ignore incomplete
+        if end_idx == -1: break
+
+        # Extract full frame from the response
+        frame = response[start_idx : end_idx + 2]
+
+        # Set cursor for the next iteration
+        # cursor = end_idx + 2
+        cursor = start_idx + len(frame)
+
+        # Parse current frame ---------------------------------------------------
+
+        # a0 a1 [size:2B] [payload?] [cs:1B] 0d 0a (assume minimum payload of 0B)
+        if len(frame) < 7:
+            continue
+
+        payload_size = int.from_bytes(frame[2:4], 'big')
+        payload      = frame[4 : 4 + payload_size]
+
+        payload_hexstr  = ' '.join(f'{b:02x}' for b in payload)
+        payload_typestr = __ch341rdr_phoenix_output_type_mapper(payload)
+
+        results.append((
+            payload_typestr,
+            payload_hexstr,
+        ))
+
+    return results
 
 
 # -------------------------------------------------------------------------------------
@@ -94,40 +121,39 @@ def ch341rdr_onwrite(stream_fn, read_fn):
     ```
     """
 
-    # attempt get an ACK, may need to read through some bytes for this
-
     stats = {
         "parsing-success": False,
         "max-parse-retry": 10,
         "retry-count":     0,
-        "ack-result":      None,
+        "outputs":         [],
     }
 
     def try_parsing(resp):
-        # this fn gets called for every stream loop, and once ACK/NACK found, this needs not run
+        # this fn gets called for every stream loop, and once outputs found, this needs not run
         if stats["parsing-success"]: return
-        ok, val = __ch341rdr_phoenix_parse_ack(resp)
-        if not ok:
-            # parse failed, return but increment the counter
+        results = __ch341rdr_phoenix_parse_output(resp)
+
+        if len(results) == 0:
+            # no outputs found
             stats["retry-count"] += 1
             if stats["retry-count"] > stats["max-parse-retry"]:
                 # if count exceeds threshold, raise to have stream function return (simulate a Ctrl+C)
                 raise KeyboardInterrupt()
-            # else let stream continue reading data
             return
+
         else:
-            # on success: these will be used outside stream
+            # Dont't raise KeyboardInterrupt, let the user keep reading
             stats["parsing-success"] = True
-            stats["ack-result"] = val
+            stats["outputs"].extend(results)
+
 
     stream_fn(process_instream=try_parsing)
 
-    if not stats["parsing-success"]:
-        log.error("no valid ACK / NACK received")
-    elif stats["ack-result"] is not None:
-        log.info("ACK payload: %s", stats["ack-result"])
+    if len(stats["outputs"]) > 0:
+        for type_str, hex_str in stats["outputs"]:
+            log.info(f"{type_str}: {hex_str}")
     else:
-        log.error("NACK: command rejected")
+        log.error("no output found")
 
 
 __all__ = [
