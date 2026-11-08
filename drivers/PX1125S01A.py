@@ -19,7 +19,7 @@ def __ch341rdr_phoenix_output_type_mapper(payload: bytes) -> str:
     if len(payload) >= 1 and payload[0] == 0x84: return "NACK"
 
     if len(payload) >= 2 and payload[0] == 0x64 and payload[1] == 0x8C: return "Constellations"
-    if len(payload) >= 2 and payload[0] == 0x64 and payload[1] == 0x03: return "Sentence Intervals"
+    if len(payload) >= 2 and payload[0] == 0x64 and payload[1] == 0x81: return "Sentence Intervals"
 
     return "O/P"
 
