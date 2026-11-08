@@ -332,7 +332,8 @@ def cmd_write(args):
     try:
         driver.ch341rdr_onwrite(stream_fn, read_fn)
     except Exception as e:
-        log.error("driver-side onwrite error: %s", e)
+        error_name = type(e).__name__
+        log.exception(f"driver-side onwrite error: {error_name}: {e}")
 
 
 def cmd_list(_args):
