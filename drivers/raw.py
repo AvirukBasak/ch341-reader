@@ -25,12 +25,12 @@ def __ch341rdr_raw_foo_bar(parsed_userdata):
 # -------------------------------------------------------------------------------------
 
 
-def ch341rdr_write(parsed_userdata: bytes) -> bytes:
+def ch341rdr_write(user_input: bytes) -> bytes:
     """
     Converts bytes taken from user (same endian as user input)
     and optionally contructs device specific frames / payload.
     """
-    data = __ch341rdr_raw_foo_bar(parsed_userdata)
+    data = __ch341rdr_raw_foo_bar(user_input)
     return data
 
 

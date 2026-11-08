@@ -14,7 +14,7 @@ log = logging.getLogger(os.path.basename(__file__))
 CH341RDR_NAME = "phoenix"
 
 
-def __ch341rdr_phoenix_output_parser(payload: bytes) -> list[str]:
+def __ch341rdr_phoenix_parse_payload(payload: bytes) -> list[str]:
 
     hex_str = ' '.join(
         f'{b:02x}' for b in payload
@@ -114,7 +114,7 @@ def __ch341rdr_phoenix_output_parser(payload: bytes) -> list[str]:
     return [ f"O/P: {hex_str}" ]
 
 
-def __ch341rdr_phoenix_parse_output(response: bytes) -> list[str]:
+def __ch341rdr_phoenix_parse_response(response: bytes) -> list[str]:
     results: list[str] = []
     cursor = 0
 
@@ -147,10 +147,107 @@ def __ch341rdr_phoenix_parse_output(response: bytes) -> list[str]:
         payload_size = int.from_bytes(frame[2:4], 'big')
         payload      = frame[4 : 4 + payload_size]
 
-        payload_parsed = __ch341rdr_phoenix_output_parser(payload)
+        payload_parsed = __ch341rdr_phoenix_parse_payload(payload)
         results.extend(payload_parsed)
 
     return results
+
+
+def __ch341rdr_phoenix_parse_userinput(user_input: bytes) -> bytes:
+    """
+    Returns user_input as is if it doesn't start with a $. Else, it parses
+    the input according to a predefined syntax.
+
+    Syntax:
+        $COMMAND[:KEY=VAL,KEY=VAL,...]
+
+    Commands:
+        $Get-Active-Constellations
+        $Get-Msg-Intervals
+        $Set-Active-Constellations:GP=1,GL=0,GA=1,GB=1,GI=1,W=0
+        $Set-Msg-Intervals:GGA=1,GSA=1,GSV=3,GLL=1,RMC=1,VTG=1,ZDA=1,GNS=0,GBS=0,GSR=0,DTM=0,GST=1,W=0
+        $Restart
+    """
+    if user_input[0:1] != b"$":
+        # user input starts with anything else, but not $
+        return user_input
+
+    # if user input starts with $, it is a aliased command in readable text and has to be parsed
+
+    input_str  = user_input.decode() # decode to string
+    input_str  = input_str[1:]       # ignore the $
+    input_str  = input_str.lower()   # so as to ignore cases
+
+    # Split into command and optional args on ':'
+    parts       = input_str.split(":", 1)
+    command     = parts[0].lower()
+    args_str    = parts[1] if len(parts) == 2 else ""
+
+    # Parse key=value pairs if present
+    kv_pairs = {}
+    if args_str:
+        for token in args_str.split(","):
+            token = token.strip()
+            if "=" in token:
+                k, v = token.split("=", 1)
+                kv_pairs[k.strip().lower()] = v.strip()
+
+    # -------------------------------------------------------------------------
+    # GET commands
+    # -------------------------------------------------------------------------
+
+    if command == "get-active-constellations":
+        return b"\x64\x1a"
+
+    if command == "get-msg-intervals":
+        return b"\x64\x03"
+
+    # -------------------------------------------------------------------------
+    # SET commands
+    # -------------------------------------------------------------------------
+
+    if command == "set-active-constellations":
+        # Bit positions: GP=0, GL=1, GA=2, GB=3, GI=4
+        # Payload: 64 8C B2 B3 (16-bit big-endian bitmask)
+        constellation_bits = { "gp": 0, "gl": 1, "ga": 2, "gb": 3, "gi": 4 }
+
+        bitmask = 0
+        for name, bit in constellation_bits.items():
+            val = int(kv_pairs.get(name, "0"))
+            if val: bitmask |= (1 << bit)
+
+        b2 = (bitmask >> 8) & 0xFF
+        b3 =  bitmask       & 0xFF
+        w  = 0x01 if int(kv_pairs.get("w", "0")) else 0x00
+
+        return b"\x64\x19" + bytes([ b2, b3, w ])
+
+
+    if command == "set-msg-intervals":
+        # Payload: 64 81 + 12 bytes in fixed order, omitted = 0
+        # Reference: Page 68-69 of AN0037
+        sentence_byte_order = [ "gga", "gsa", "gsv", "gll", "rmc", "vtg", "zda", "gns", "gbs", "gsr", "dtm", "gst" ]
+
+        payload = b"\x64\x02"
+        for sentence in sentence_byte_order:
+            val = int(kv_pairs.get(sentence, "0"))
+            if not (0 <= val <= 255):
+                raise ValueError(f"invalid interval value for {sentence}: {val}")
+            payload += bytes([ val ])
+
+        w = 0x01 if int(kv_pairs.get("w", "0")) else 0x00
+
+        return payload + bytes([w])
+
+    # -------------------------------------------------------------------------
+    # MISC commands
+    # -------------------------------------------------------------------------
+
+    if command == "restart":
+        return b"\x01"
+
+
+    raise ValueError(f"invalid command: {user_input.decode()}")
 
 
 # -------------------------------------------------------------------------------------
@@ -158,22 +255,27 @@ def __ch341rdr_phoenix_parse_output(response: bytes) -> list[str]:
 # -------------------------------------------------------------------------------------
 
 
-def ch341rdr_write(parsed_userdata: bytes) -> bytes:
+def ch341rdr_write(user_input: bytes) -> bytes:
     """
     Converts bytes taken from user (same endian as user input)
     and optionally contructs device specific frames / payload.
     """
+
+    parsed_userinput = __ch341rdr_phoenix_parse_userinput(user_input)
+    if parsed_userinput != user_input:
+        log.info("entered commandparsed_userinput: %s", parsed_userinput.hex(" "))
+
     # A0 A1 [size:2B] [payload:size] [cs:1B] 0D 0A
     # [size] unit is in bytes, stored big endian
     # [cs] is just xor of everything, likely a simple xor checksum
     # payload contains actual command, see datasheet
     cs = 0
-    for b in parsed_userdata: cs ^= b
-    size = len(parsed_userdata)
+    for b in parsed_userinput: cs ^= b
+    size = len(parsed_userinput)
     return (
         bytes([0xA0, 0xA1])
         + size.to_bytes(2, "big")
-        + parsed_userdata
+        + parsed_userinput
         + bytes([cs, 0x0D, 0x0A])
     )
 
@@ -216,7 +318,7 @@ def ch341rdr_onwrite(stream_fn, read_fn):
     def try_parsing(resp):
         # this fn gets called for every stream loop, and once outputs found, this needs not run
         if stats["parsing-success"]: return
-        results = __ch341rdr_phoenix_parse_output(resp)
+        results = __ch341rdr_phoenix_parse_response(resp)
 
         if len(results) == 0:
             # no outputs found

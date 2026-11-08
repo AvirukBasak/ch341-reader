@@ -149,7 +149,7 @@ def read_once(handle, hex_mode: bool, read_size: int, timeout: int) -> str | byt
 
 
 def read_streaming(handle, hex_mode: bool, read_size: int, timeout: int, process_instream = lambda resp: None) -> None:
-    log.info("Streaming - press Ctrl-C to exit")
+    log.info("Streaming - press Ctrl-C to exit\n")
     out = sys.stdout.buffer if not hex_mode else None
     try:
         while True:
@@ -299,19 +299,19 @@ def cmd_write(args):
 
     if write_mode == DataMode.HEX:
         try:
-            parsed_userdata = bytes.fromhex(args[0].replace("_", ""))
+            user_input = bytes.fromhex(args[0].replace("_", ""))
         except ValueError as e:
             log.error(f"invalid hex: {e}")
             return
     else: # txt
-        parsed_userdata = ast.literal_eval(f'b"{args[0]}"')
+        user_input = ast.literal_eval(f'b"{args[0]}"')
 
     driver = state["drivers"].get(write_template)
     if driver is None:
         log.error("unknown template '%s', did you load its driver?", write_template)
         return
     try:
-        wire_data = driver.ch341rdr_write(parsed_userdata)
+        wire_data = driver.ch341rdr_write(user_input)
         ch341_write(state["handle"], wire_data)
         log.debug("wrote %d bytes", len(wire_data))
     except Exception as e:
