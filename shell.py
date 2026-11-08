@@ -59,6 +59,10 @@ from modules.ch341 import (
     ch341_carrier_raised
 )
 
+
+HISTORY_FILE = os.path.expanduser("~/.ch341rdr_history")
+
+
 logging.basicConfig(
     stream=sys.stderr,
     level=logging.INFO,
@@ -463,6 +467,18 @@ def main() -> None:
     if not stat:
         log.error("failed to load stock drivers, exiting")
         return
+
+    try:
+        # Enables arrow keys in input() and history
+        import readline
+        readline.read_history_file(HISTORY_FILE)
+        readline.set_history_length(512)
+    except ImportError:
+        # Windows, arrow keys won't work but input() still works
+        pass
+    except FileNotFoundError:
+        # First run, no history file yet
+        pass
 
     while True:
         try:
