@@ -44,8 +44,7 @@ python archived/reader.py > output.bin
 
 ## Usage - `read_to_file.py`
 
-Reads data continuously from the device via CH341 and writes to
-hourly files. Automatically switches to a new file at the top of each hour.
+Reads data continuously from the device via CH341 and writes to hourly files. Automatically switches to a new file at the top of each hour.
 
 ```shell
 # Basic - write raw bytes to timestamped files
@@ -75,118 +74,162 @@ kill -SIGTERM <pid> # You can also use Ctrl+C or SIGINT
 
 ## Interactive Shell
 
-Use `shell.py` for an interactive session. This command restarts the chip.
+Launch the shell with:
 
 ```shell
-> open
-> write 01 hex phoenix
-.........
-^C
-[INFO] shell.py: Interrupted
-[INFO] PX1125S01A.py: ACK: 83 01
+sudo ./shell.py
 ```
 
-### Main Commands
+- On launch you get a `>>` prompt, meaning no device is open.
+- Run `open` to open a device, which gives a `[vid]:[pid]>` prompt.
+- Anything starting with `[INFO]` or `[ERROR]` is from the program.
+- Any `>` prompt is to give a command to the program.
 
-```shell
-open [vid:pid]               # Default: CH341 VID/PID
-close                        # Release device
-set read-mode hex            # Read as `hex` unless specified
-read                         # Read, read-size and read-mode are `set`
-read [read-size] [read-mode] # Read in chunks of `read-size`, as either `txt` or `hex`
-set baud 115200              # Default baud, same as the SkyTraQ chip
-help                         # List of commands
+### Device Commands
+
+#### `open`
+
+```
+open [vid:pid]
 ```
 
-### Write Command
+- Opens a USB device. Default: `VID=0x1a86 PID=0x7523`, baud `115200`.
+- If no `vid:pid` is given, the default is used.
+- If a device is already open, it is closed first and then reopened.
 
-```shell
-write [payload] [write-mode=txt] [write-template=raw]
+#### `close`
+
+```
+close
 ```
 
-| Argument         | Options                           | Default |
-|------------------|-----------------------------------|---------|
-| `write-mode`     | `txt`, `hex`                      | `txt`   |
-| `write-template` | `raw` or user defined driver name | `raw`   |
+- Releases the USB device.
+- If no device is open, does nothing.
 
-**Examples:**
+### Configuration Commands
 
-Send a text string (escape sequences supported)
+#### `set baud`
+
+```
+set baud <value>
+```
+
+- Sets the baud rate. Default is `115200`.
+
+#### `set read-mode`
+
+```
+set read-mode <txt|hex>
+```
+
+- Sets the default read mode.
+- `txt` streams output as text.
+- `hex` outputs one line of space-separated hex bytes per read (e.g. `de ad be ef`).
+- Used by both `read` and the automatic read loop on `write`.
+- Default is `hex`. Useful for byte-level inspection.
+
+#### `set read-size`
+
+```
+set read-size <bytes>
+```
+
+- Sets the read buffer size in bytes.
+- On open, this is automatically queried from the device over USB.
+- Too small and the device buffer will overflow; too large and reads may time out.
+- Best left untouched.
+
+### Reading
+
+#### `read`
+
+```
+read
+read <read-size> <read-mode>
+```
+
+- Reads from the device.
+- Uses the current `read-size` and `read-mode` defaults unless overridden inline.
+- Press Ctrl+C to stop reading and return to the prompt.
+
+### Writing
+
+#### `write`
+
+```
+write <payload> [write-mode=txt] [write-template=raw]
+```
+
+| Argument         | Options                       | Default |
+|------------------|-------------------------------|---------|
+| `write-mode`     | `txt`, `hex`                  | `txt`   |
+| `write-template` | `raw` or a loaded driver name | `raw`   |
+
+Sends `payload` to the device. After writing, a read loop starts automatically. Press Ctrl+C to stop it and return to the prompt. ACK / NACK / Device Response will show up after you press Ctrl+C (if the loaded driver supports it).
+
+`write-mode` controls how the payload is interpreted: as text (with escape sequences supported) or as hex bytes. Underscores in hex payloads are ignored and allowed for readability.
+
+Spaces are not supported in the payload (hex or txt). For hex, use `_` as a separator instead. To include a space character in a txt payload, use `\x20`.
+
+`write-template` controls framing. `raw` sends the payload as-is with no framing. A driver name wraps the payload in that driver's protocol frame before sending.
+
+**Send a text string (escape sequences supported):**
 
 ```shell
 write hello\n
 ```
 
-Send bytes, no protocol, so `raw` (_ is ignored, allowed for readability)
+**Send raw bytes with no framing:**
 
 ```shell
 write 0a_0b_0c_0d_0e_0f hex raw
 ```
 
-Reset PX1125S-01A chip (hex payload, use `phoenix` for protocol frame). This chip
-has stock support.
+**Send a command to the SkyTraQ PX1125S-01A (reset):**
 
 ```shell
 write 01 hex phoenix
 ```
 
-### Reading the Output
+See [`docs/drivers/PX1125S-01A.md`](docs/drivers/PX1125S-01A.md) for the full list of supported commands.
 
-- Anything starting with `[INFO]` or `[ERROR]` is from the program. Any `>` prompt is to give a command to the program.
-- First run `open` after launching `sudo ./shell.py`. This gives a `[vid]:[pid]>` prompt.
-- Run `read`. Press Ctrl+C to stop reading and return to the `[vid]:[pid]>` prompt.
-- On `write`, a read loop starts automatically. ACK / NACK / failure information will show up after you press Ctrl+C.
-- ACKs are dependent on the UART device and are implemented by user defined driver (see `drivers/*.py`).
+### Driver Commands
 
-### Driver System
+#### `load`
+
+```
+load <file>
+```
+Loads a driver from a `.py` file. Drivers provide write framing and optional ACK/NACK handling.
+
+#### `lsdrv`
+
+```
+lsdrv
+```
+
+Lists all currently loaded drivers. By default the following drivers will be loaded:
+- `drivers/raw.py`
+- `drivers/PX1125S01A.py`
+
+To disable a stock driver, edit the function `load_stock_drivers()` in [`shell.py`](shell.py).
+
+### Exiting
+
+- Press Ctrl+C or Ctrl+D at the `>>` or `[vid]:[pid]>` prompt to exit.
+- Ctrl+C inside a `read` or `write` loop stops the loop and returns to the prompt; it does not exit the shell.
+
+### Drivers System
 
 Write templates are handled by driver modules. All drivers are loaded from `.py` files.
 
-```shell
-load drivers/phoenix.py   # load a driver
-lsdrv                     # list loaded drivers
-```
+Stock drivers ship in `drivers/` and some of these may be auto-loaded on start. To disable a stock driver, edit the function `load_stock_drivers()` in `shell.py`.
 
-Stock drivers ship in `drivers/` and get auto-loaded on start:
+Presently, the following drivers are present:
 
-| Driver file             | `CH341RDR_NAME` | Device                            |
-|-------------------------|-----------------|-----------------------------------|
-| `drivers/raw.py`        | `raw`           | Pass-through, no framing          |
-| `drivers/PX1125S01A.py` | `phoenix`       | SkyTraQ PX1125S-01A GNSS receiver |
+| Driver file             | `CH341RDR_NAME` | Device                                                           |
+|-------------------------|-----------------|------------------------------------------------------------------|
+| `drivers/raw.py`        | `raw`           | Pass-through, no framing                                         |
+| `drivers/PX1125S01A.py` | `phoenix`       | [SkyTraQ PX1125S-01A GNSS receiver](docs/drivers/PX1125S-01A.md) |
 
-Stock drivers are loaded automatically on startup. To write a custom driver, see `drivers/raw.py`
-for the required exports (`CH341RDR_NAME`, `ch341rdr_write`, `ch341rdr_onwrite`).
-
-NOTE: To disable a stock driver, edit the function: `shell.py -> load_stock_drivers()`.
-
-## Example: Enabling `$GNGST` Sentences
-
-The GNSS receiver module we worked with has 3 layers in general:
-
-1. **The Antenna** - the large ceramic patch antenna (possibly)
-2. **SkyTraQ PX1125S-01A  MCU** - a.k.a "phoenix", processes the GNSS signals, produces NMEA sentences, communicates via UART.
-3. **CH340C UART-USB** - takes NMEA from the MCU and exposes a USB interface for a PC
-
-The MCU has its own binary protocol. You can send these commands over USB, going via the CH340C chip. This program handles the framing for you.
-
-### Example
-
-`$GNGST` reports error statistics directly from the GNSS receiver. Position error is generally CEP, measured in meters - a circle within which 50% of fixes land. The error is the circle's radius. A larger circle is worse.
-
-```shell
-# Ephemeral (lost on power cycle), last byte 00
-write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_00 hex phoenix
-
-# Persistent (written to FLASH), last byte 01
-write 64_02_01_01_03_01_01_01_01_00_00_00_00_01_01 hex phoenix
-```
-
-A successful ACK echoes back the command ID (for a `64 02` command):
-```
-[INFO] PX1125S01A.py: ACK: 83 64 02
-```
-
-A NACK looks the same but with a leading `84` byte:
-```
-[INFO] PX1125S01A.py: NACK: 84 64 02
-```
+To write a custom driver, see `drivers/raw.py` for the required exports (`CH341RDR_NAME`, `ch341rdr_write`, `ch341rdr_onwrite`).

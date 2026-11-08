@@ -14,18 +14,108 @@ log = logging.getLogger(os.path.basename(__file__))
 CH341RDR_NAME = "phoenix"
 
 
-def __ch341rdr_phoenix_output_type_mapper(payload: bytes) -> str:
-    if len(payload) >= 1 and payload[0] == 0x83: return "ACK"
-    if len(payload) >= 1 and payload[0] == 0x84: return "NACK"
+def __ch341rdr_phoenix_output_parser(payload: bytes) -> list[str]:
 
-    if len(payload) >= 2 and payload[0] == 0x64 and payload[1] == 0x8C: return "Constellations"
-    if len(payload) >= 2 and payload[0] == 0x64 and payload[1] == 0x81: return "Sentence Intervals"
+    hex_str = ' '.join(
+        f'{b:02x}' for b in payload
+    )
 
-    return "O/P"
+    # Generic ACK -------------------------------------------------------------------------
+
+    if (
+        len(payload) >= 1 and
+        payload[0] == 0x83
+    ):
+        return [ f"ACK (83): {hex_str}" ]
+
+    # Generic NACK ------------------------------------------------------------------------
+
+    if (
+        len(payload) >= 1 and
+        payload[0] == 0x84
+    ):
+        return [ f"NACK (84): {hex_str}" ]
+
+    # Contellations used in solution ------------------------------------------------------
+
+    if (
+        # Reference: Page 80-81 of "AN0037 - Binary Messages of SkyTraQ Phoenix GNSS Receiver"
+        # E.g. 64 8c 00 1d
+        len(payload) == 4  and
+        payload[0] == 0x64 and
+        payload[1] == 0x8C
+    ):
+        fields = {
+            # "ID":    payload[0],
+            # "SubID": payload[1],
+            "B2":    payload[2],
+            "B3":    payload[3],
+        }
+
+        # Combine B2 and B3 into a 16-bit big-endian value
+        constls_bitmask = (fields["B2"] << 8) | fields["B3"]
+
+        constls = {
+             "GP": bool(constls_bitmask & (1 << 0)),  # GPS
+             "GL": bool(constls_bitmask & (1 << 1)),  # GLONASS
+             "GA": bool(constls_bitmask & (1 << 2)),  # Galileo
+             "GB": bool(constls_bitmask & (1 << 3)),  # BeiDou
+             "GI": bool(constls_bitmask & (1 << 4)),  # NavIC
+        }
+
+        output_str = ""
+        for k, v in constls.items():
+            output_str += f"{k}:{v} "
+        output_str = output_str.strip()
+
+        return [
+            f"Constellations (Bool): {output_str}",
+            f"      Payload (Bytes): {hex_str}"
+        ]
+
+    # Sentences active and interval -------------------------------------------------------
+
+    if (
+        # Reference: Page 68-69 of "AN0037 - Binary Messages of SkyTraQ Phoenix GNSS Receiver"
+        # E.g. 64 81 01 01 01 01 01 01 01 00 00 00 00 01
+        len(payload) == 14 and # 14 byte payload
+        payload[0] == 0x64 and # ID    = 0x64
+        payload[1] == 0x81     # SubID = 0x81
+    ):
+        fields = {
+            # "ID":    payload[0],
+            # "SubID": payload[1],
+            "GGA":   payload[2],
+            "GSA":   payload[3],
+            "GSV":   payload[4],
+            "GLL":   payload[5],
+            "RMC":   payload[6],
+            "VTG":   payload[7],
+            "ZDA":   payload[8],
+            "GNS":   payload[9],
+            "GBS":   payload[10],
+            "GSR":   payload[11],
+            "DTM":   payload[12],
+            "GST":   payload[13],
+        }
+
+        output_str = ""
+        for k, v in fields.items():
+            output_str += f"{k}:{v} "
+        output_str = output_str.strip()
+
+        return [
+            f"Sentence Intervals (Sec): {output_str}",
+            f"         Payload (Bytes): {hex_str}"
+        ]
+
+    # Cannot parse, generic O/P -----------------------------------------------------------
+
+    return [ f"O/P: {hex_str}" ]
 
 
-def __ch341rdr_phoenix_parse_output(response: bytes) -> list[tuple[str,str]]:
-    results = []
+def __ch341rdr_phoenix_parse_output(response: bytes) -> list[str]:
+    results: list[str] = []
     cursor = 0
 
     while True:
@@ -57,13 +147,8 @@ def __ch341rdr_phoenix_parse_output(response: bytes) -> list[tuple[str,str]]:
         payload_size = int.from_bytes(frame[2:4], 'big')
         payload      = frame[4 : 4 + payload_size]
 
-        payload_hexstr  = ' '.join(f'{b:02x}' for b in payload)
-        payload_typestr = __ch341rdr_phoenix_output_type_mapper(payload)
-
-        results.append((
-            payload_typestr,
-            payload_hexstr,
-        ))
+        payload_parsed = __ch341rdr_phoenix_output_parser(payload)
+        results.extend(payload_parsed)
 
     return results
 
@@ -150,8 +235,8 @@ def ch341rdr_onwrite(stream_fn, read_fn):
     stream_fn(process_instream=try_parsing)
 
     if len(stats["outputs"]) > 0:
-        for type_str, hex_str in stats["outputs"]:
-            log.info(f"{type_str}: {hex_str}")
+        for output_str in stats["outputs"]:
+            log.info(output_str)
     else:
         log.error("no output found")
 
