@@ -497,7 +497,7 @@ def ch341_read(handle: CH341Device, size: int = CH341_DEFAULT_BULK_IN_SIZE,
 
     Returns bytes on success, raises OSError on failure.
     """
-    mps = getattr(handle, "bulk_in_max_packet_size", CH341_DEFAULT_BULK_IN_SIZE)
+    mps = handle._bulk_in_max_packet_size
     if mps > 0 and size < mps:
         log.debug("ch341_read: clamping size %d -> %d (wMaxPacketSize)", size, mps)
         size = mps
