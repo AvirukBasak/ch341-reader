@@ -1,42 +1,87 @@
 #!/bin/env python3
 
 help = """
-Commands Help Text:
+==============================================================================
+CH341 Reader — Command Reference
+==============================================================================
 
-get baud
-get read-size
-get read-mode
-get timeout
-get debug
+------------------------------------------------------------------------------
+# GET / SET FLAGS
+------------------------------------------------------------------------------
 
-set baud      [int]
-set read-size [int]
-set read-mode [hex|txt]
-set timeout   [int]
-set debug     [0|1]
+  get               - Get values of all flags
+  get <key>         - Get <key> value
+  set <key> <value> - Set <key> value
 
-read  [read-size=None] [read-mode=None]
-write [payload]        [write-mode=txt] [write-template=raw]
+  | Key             | Type    | Description                               |
+  |-----------------|---------|-------------------------------------------|
+  | baud            | int     | Serial baud rate                          |
+  | read-size       | int     | Bytes per bulk-in read                    |
+  | max-stream-size | int     | Auto-stop threshold for streaming (bytes) |
+  | read-mode       | hex|txt | How incoming data is displayed            |
+  | timeout         | int     | USB read timeout (ms)                     |
+  | debug           | 0|1     | Verbose logging                           |
 
-load [path/to/driver.py] - Load a template driver
-lsdrv                    - Lists loaded drivers
-open vid:pid             - Open a non-default device
-close                    - Release device to OS
-cls                      - CLear screen
+------------------------------------------------------------------------------
+# READING
+------------------------------------------------------------------------------
 
-Supported Read and Write Modes:
-- read-mode:  txt - Standard text output
-- read-mode:  hex - Display space separated hex bytes as data arrives
-- write-mode: txt - Parse as Python bytes string, spaces unsupported
-- read-mode:  hex - Parse as hex number, same endian as input
+  read [read-size=None] [read-mode=None]
+    Stream data from the device until max-stream-size is reached
+    or Ctrl-C is pressed. Positional args override current settings.
 
-Driver Modules:
-- A driver handles payloads for the system behind the C341
-- Stock drivers defined in "drivers/*.py"
-- User of this program can define their own anywhere
-- A driver definition requires CH341RDR_NAME = "..." (see drivers/raw.py)
-- Also requires several functions (also see drivers/raw.py)
-- write-template takes CH341RDR_NAME and calls the right functions
+------------------------------------------------------------------------------
+# WRITING
+------------------------------------------------------------------------------
+
+  write <payload> [write-mode=txt] [write-template=raw]
+    Send a payload to the device via a driver template.
+
+  write-mode:
+    txt   Parse payload as a Python bytes literal (spaces not supported)
+    hex   Parse payload as a hex string, same endianness as input
+
+  write-template:
+    Selects the loaded driver to encode the payload before sending.
+    The value must match a loaded driver's CH341RDR_NAME.
+    Use `lsdrv` to see loaded drivers and their names.
+    Default is `raw`, which sends the payload as-is with no transformation.
+
+------------------------------------------------------------------------------
+# DEVICE
+------------------------------------------------------------------------------
+
+  open  [vid:pid]   Open a device by USB VID:PID (hex). Defaults to CH341.
+  close             Release the device back to the OS.
+
+------------------------------------------------------------------------------
+# DRIVERS
+------------------------------------------------------------------------------
+
+  load <path/to/driver.py>   Load a driver module from disk
+  lsdrv                      List all currently loaded drivers
+
+  A driver module wraps the protocol spoken by the device behind the CH341.
+  Stock drivers live in drivers/*.py. Custom drivers can be loaded from
+  anywhere on disk.
+
+  Required module-level definitions (see drivers/raw.py for a template):
+    CH341RDR_NAME      str   Unique driver name used as write-template value
+    ch341rdr_write()         Encodes a payload into wire bytes
+    ch341rdr_onwrite()       Handles the response after a write
+
+  The write-template argument to `write` selects a loaded driver by its
+  CH341RDR_NAME.
+
+------------------------------------------------------------------------------
+# MISC
+------------------------------------------------------------------------------
+
+  cls    Clear the screen
+  help   Show this help text
+  exit   Exit the program
+
+==============================================================================
 """
 
 import ast
@@ -165,7 +210,10 @@ def read_streaming(handle, hex_mode: bool, read_size: int, timeout: int, process
                 data = ch341_read(handle, size=read_size, timeout=timeout)
                 process_instream(data)
             except OSError as e:
-                if e.errno in (110, 60): # ETIMEDOUT
+                if e.errno in (
+                    110,  # ETIMEDOUT - Connection timed out
+                    60    # ENOSTR    - Device not a stream
+                ):
                     # try again
                     continue
                 log.error("read error: %s", e)
@@ -193,7 +241,8 @@ def read_streaming(handle, hex_mode: bool, read_size: int, timeout: int, process
 
 def cmd_get(args):
     if not args or args[0] not in GETTABLE:
-        log.error(f"get requires one of: {', '.join(sorted(GETTABLE))}")
+        for key in sorted(GETTABLE):
+            log.info("  %-20s = %s", key, state[key])
         return
     key = args[0]
     log.info(f"{key} = {state[key]}")
