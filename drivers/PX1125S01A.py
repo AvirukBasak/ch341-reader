@@ -56,17 +56,17 @@ def __ch341rdr_phoenix_parse_payload(payload: bytes) -> list[str]:
         constls_bitmask = (fields["B2"] << 8) | fields["B3"]
 
         constls = {
-             "GP": bool(constls_bitmask & (1 << 0)),  # GPS
-             "GL": bool(constls_bitmask & (1 << 1)),  # GLONASS
-             "GA": bool(constls_bitmask & (1 << 2)),  # Galileo
-             "GB": bool(constls_bitmask & (1 << 3)),  # BeiDou
-             "GI": bool(constls_bitmask & (1 << 4)),  # NavIC
+             "GP": (constls_bitmask >> 0) & 1,  # GPS
+             "GL": (constls_bitmask >> 1) & 1,  # GLONASS
+             "GA": (constls_bitmask >> 2) & 1,  # Galileo
+             "GB": (constls_bitmask >> 3) & 1,  # BeiDou
+             "GI": (constls_bitmask >> 4) & 1,  # NavIC
         }
 
         output_str = ""
         for k, v in constls.items():
-            output_str += f"{k}:{v} "
-        output_str = output_str.strip()
+            output_str += f"{k}={v},"
+        output_str = output_str.strip(",")
 
         return [
             f"Constellations (Bool): {output_str}",
@@ -101,8 +101,8 @@ def __ch341rdr_phoenix_parse_payload(payload: bytes) -> list[str]:
 
         output_str = ""
         for k, v in fields.items():
-            output_str += f"{k}:{v} "
-        output_str = output_str.strip()
+            output_str += f"{k}={v},"
+        output_str = output_str.strip(",")
 
         return [
             f"Sentence Intervals (Sec): {output_str}",
