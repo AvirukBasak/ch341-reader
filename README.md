@@ -137,25 +137,25 @@ Everything from [Usage: `read_to_stdout.py`](#usage-read_to_stdoutpy) applies.
 
 ```shell
 # Basic: write raw bytes to timestamped files
-python tools/read_to_file.py
+python read_to_file.py
 
 # With prefix and suffix, produces file names like: gps-2026.10.11-02.48.41-raw
-python tools/read_to_file.py -p gps -s raw
+python read_to_file.py -p gps -s raw
 
 # With extension, produces file names like: gps-2026.10.11-02.48.41.bin
-python tools/read_to_file.py -p gps -e bin
+python read_to_file.py -p gps -e bin
 
 # All three, produces file names like: gps-2026.10.11-02.48.41-nmea.bin
-python tools/read_to_file.py -p gps -s nmea -e bin
+python read_to_file.py -p gps -s nmea -e bin
 
 # Hex dump mode, use only if output is binary
-python tools/read_to_file.py -p gps -e hex --hex
+python read_to_file.py -p gps -e hex --hex
 
 # Different baud rate
-python tools/read_to_file.py --baud 9600
+python read_to_file.py --baud 9600
 
 # Non-default VID/PID, with debug logging
-python tools/read_to_file.py --vid 0x1a86 --pid 0x7522 --debug
+python read_to_file.py --vid 0x1a86 --pid 0x7522 --debug
 
 # Stop gracefully (flushes and closes current file)
 kill -SIGTERM <pid> # You can also use Ctrl+C or SIGINT
@@ -206,6 +206,9 @@ close
 
 ### Configuration Commands
 
+Each `set` has a respective `get` command as well which returns the current value,
+or if not changed, the default value.
+
 #### `set baud`
 
 Configures the shell and **passes the configuration to the CH341**.
@@ -245,6 +248,43 @@ set read-size <bytes>
 - On open, this is automatically queried from the CH341.
 - If user-specified size is smaller than CH341's built-in configuration, it'll be clamped to the built-in configuration.
 
+#### `set max-stream-size`
+
+Configures the **shell only**.
+
+```
+set max-stream-size <bytes>
+```
+
+- Sets the maximum number of bytes to collect before automatically stopping a stream.
+- Once exceeded, the read loop halts as if Ctrl-C was pressed.
+- Default is `2 × CH341_DEFAULT_BULK_IN_SIZE × 1000` bytes, which happens to be `64000` presently.
+
+#### `set timeout`
+
+Configures the shell and **passes the configuration to the CH341**.
+This does NOT configure the UART device.
+
+```
+set timeout <ms>
+```
+
+- Sets the USB read timeout in milliseconds.
+- Default is `1000`.
+
+#### `set debug`
+
+Configures the **shell only**.
+
+```
+set debug <0|1>
+```
+
+- Enables or disables verbose debug logging.
+- `0` sets log level to `INFO` and `ERROR`.
+- `1` enables additional log level `DEBUG`.
+- Default is `0`.
+
 ---
 
 ### Reading
@@ -259,6 +299,7 @@ read <read-size> <read-mode>
 - Reads from the UART device in a continuous loop to `stdout`.
 - Uses the configured `read-mode` and `read-size` unless overridden by inline args.
 - Press Ctrl+C to stop reading and return to the prompt.
+- Stops automatically once `max-stream-size` bytes read.
 
 ---
 
@@ -276,9 +317,8 @@ write <payload> [write-mode=txt] [write-template=raw]
 | `write-template` | `raw` or a loaded driver name | `raw`   |
 
 - Sends `payload` to the UART device.
-- After writing, a read loop starts automatically.
-- Press Ctrl+C to stop it and return to the prompt.
-- ACK / NACK / Response will show up after you press Ctrl+C (depends on the `write-template` driver).
+- `write-mode` controls if input is parsed into bytes from hex or passed as text.
+- `write-template` invokes external driver module to handle write framing and returned data.
 
 **Payload**:
 
@@ -316,7 +356,7 @@ write 0a_0b_0c_0d_0e_0f hex raw
 **Send command to restart a SkyTraQ PX1125S-01A device:**
 
 ```shell
-write $restart txt phoenix
+write $Restart txt phoenix
 ```
 
 See [`docs/drivers/PX1125S-01A.md`](docs/drivers/PX1125S-01A.md) for the full list of supported commands.
