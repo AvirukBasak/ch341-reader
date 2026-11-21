@@ -280,13 +280,13 @@ def ch341rdr_write(user_input: bytes) -> bytes:
     )
 
 
-def ch341rdr_onwrite(stream_fn, read_fn):
+def ch341rdr_onwrite(stream_fn, read_fn, max_stream_size):
     """
     Do some work after write success, e.g. parse returned ACKs
     or show some status. The shell framework provides 2 functions
     to read any ACKed data.
     
-    The stream_fn(...) -> None writes data to stdout.
+    The `stream_fn(...) -> None` writes data to stdout.
     Provides a callback to parse that data.
     ```
     stream_fn(
@@ -298,7 +298,7 @@ def ch341rdr_onwrite(stream_fn, read_fn):
     ) -> None
     ```
 
-    The read_fn(...) -> str | bytes | None reads once and returns it.
+    The `read_fn(...) -> str | bytes | None` reads once and returns it.
     ```
     read_fn(
       hex_mode: bool = state, - Hex mode, default value is from `set`
@@ -306,38 +306,31 @@ def ch341rdr_onwrite(stream_fn, read_fn):
       timeout: int   = state, - Timeout, default value is from `set`
     ) -> str | bytes | None
     ```
+
+    Once `max_stream_size` is exceeded while streaming, it stops the read
+    loop automatically and prints the parsed outputs.
     """
 
-    stats = {
-        "parsing-success": False,
-        "max-parse-retry": 10,
-        "retry-count":     0,
-        "outputs":         [],
-    }
+    streamed_bytes = b''
 
-    def try_parsing(resp):
-        # this fn gets called for every stream loop, and once outputs found, this needs not run
-        if stats["parsing-success"]: return
-        results = __ch341rdr_phoenix_parse_response(resp)
+    def collect_responses(data_bytes):
 
-        if len(results) == 0:
-            # no outputs found
-            stats["retry-count"] += 1
-            if stats["retry-count"] > stats["max-parse-retry"]:
-                # if count exceeds threshold, raise to have stream function return (simulate a Ctrl+C)
-                raise KeyboardInterrupt()
-            return
+        nonlocal streamed_bytes
+        nonlocal max_stream_size
 
-        else:
-            # Dont't raise KeyboardInterrupt, let the user keep reading
-            stats["parsing-success"] = True
-            stats["outputs"].extend(results)
+        # this fn gets called for every stream loop, but stop the loop if threshold crossed
+        if len( streamed_bytes ) >= max_stream_size:
+            # if length exceeds threshold, raise to have stream function return (simulate a Ctrl+C)
+            raise KeyboardInterrupt()
+        # append data
+        streamed_bytes += data_bytes
 
+    stream_fn(process_instream=collect_responses)
 
-    stream_fn(process_instream=try_parsing)
+    results = __ch341rdr_phoenix_parse_response(streamed_bytes)
 
-    if len(stats["outputs"]) > 0:
-        for output_str in stats["outputs"]:
+    if len(results) > 0:
+        for output_str in results:
             log.info(output_str)
     else:
         log.error("no output found")

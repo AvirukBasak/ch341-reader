@@ -109,6 +109,10 @@ DATA_MODES = [DataMode.HEX, DataMode.TXT]
 state = {
     "baud":      CH341_DEFAULT_BAUDRATE,
     "read-size": CH341_DEFAULT_BULK_IN_SIZE,
+
+    "max-stream-size": 2 * CH341_DEFAULT_BULK_IN_SIZE * 1000, # make it 2 * CH341_DEFAULT_BULK_IN_SIZE KB default
+                                                              # why? coz it sounds like a good size
+
     "read-mode": DataMode.TXT,
     "timeout":   1000,
     "debug":     False,
@@ -118,14 +122,18 @@ state = {
     "drivers":   {}
 }
 
-GETTABLE = {"baud", "read-size", "read-mode", "timeout", "debug"}
+GETTABLE = {"baud", "read-size", "max-stream-size", "read-mode", "timeout", "debug"}
 
 SET_PARSERS = {
     "baud":           int,
     "read-size":      int,
+
+    "max-stream-size": int,
+
     "read-mode":      lambda v: v if v in DATA_MODES      else (_ for _ in ()).throw(ValueError(f"invalid read-mode: {v}")),
     "write-mode":     lambda v: v if v in DATA_MODES      else (_ for _ in ()).throw(ValueError(f"invalid write-mode: {v}")),
     "write-template": lambda v: v if v in WRITE_TEMPLATES else (_ for _ in ()).throw(ValueError(f"invalid write-template: {v}")),
+
     "timeout":        int,
     "debug":          lambda v: bool(int(v)),
 }
@@ -277,8 +285,31 @@ def cmd_read(args):
         log.error(f"{e}")
         return
 
+    streamed_size   = 0
+    max_stream_size = state["max-stream-size"]
+
+    # auto stops streaming after max_stream_size bytes
+    def auto_stream_stopper(data_bytes):
+
+        nonlocal streamed_size
+        nonlocal max_stream_size
+
+        if streamed_size >= max_stream_size:
+            # raise to have stream function return (simulate a Ctrl+C)
+            raise KeyboardInterrupt()
+        # count number of bytes streamed
+        streamed_size += len(data_bytes)
+
     hex_mode = read_mode == DataMode.HEX
-    read_streaming(state["handle"], hex_mode, read_size, state["timeout"])
+
+    log.info(f"Streaming upto {state["max-stream-size"]} Bytes")
+    read_streaming(
+        state["handle"],
+        hex_mode,
+        read_size,
+        state["timeout"],
+        process_instream = auto_stream_stopper
+    )
 
 
 def cmd_write(args):
@@ -334,7 +365,7 @@ def cmd_write(args):
         return read_streaming(state["handle"], hex_mode, read_size, timeout, process_instream)
 
     try:
-        driver.ch341rdr_onwrite(stream_fn, read_fn)
+        driver.ch341rdr_onwrite(stream_fn, read_fn, state["max-stream-size"])
     except Exception as e:
         error_name = type(e).__name__
         log.exception(f"driver-side onwrite error: {error_name}: {e}")

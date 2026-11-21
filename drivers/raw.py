@@ -34,13 +34,13 @@ def ch341rdr_write(user_input: bytes) -> bytes:
     return data
 
 
-def ch341rdr_onwrite(stream_fn, read_fn):
+def ch341rdr_onwrite(stream_fn, read_fn, max_stream_size):
     """
     Do some work after write success, e.g. parse returned ACKs
     or show some status. The shell framework provides 2 functions
     to read any ACKed data.
     
-    The stream_fn(...) -> None writes data to stdout.
+    The `stream_fn(...) -> None` writes data to stdout.
     Provides a callback to parse that data.
     ```
     stream_fn(
@@ -52,7 +52,7 @@ def ch341rdr_onwrite(stream_fn, read_fn):
     ) -> None
     ```
 
-    The read_fn(...) -> str | bytes | None reads once and returns it.
+    The `read_fn(...) -> str | bytes | None` reads once and returns it.
     ```
     read_fn(
       hex_mode: bool = state, - Hex mode, default value is from `set`
@@ -60,6 +60,9 @@ def ch341rdr_onwrite(stream_fn, read_fn):
       timeout: int   = state, - Timeout, default value is from `set`
     ) -> str | bytes | None
     ```
+
+    Once `max_stream_size` is exceeded while streaming, it stops the read
+    loop automatically and prints the parsed outputs.
     """
     return
 
