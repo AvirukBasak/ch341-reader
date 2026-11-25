@@ -109,6 +109,24 @@ def __ch341rdr_phoenix_parse_payload(payload: bytes) -> list[str]:
             f"         Payload (Bytes): {hex_str}"
         ]
 
+    # QZSS status ---------------------------------------------------------------------------
+
+    if (
+        # Reference: Page 54-55 of "AN0037 - Binary Messages of SkyTraQ Phoenix GNSS Receiver"
+        # E.g. 62 81 01 03
+        len(payload) == 4 and
+        payload[0] == 0x62 and
+        payload[1] == 0x81
+    ):
+        enabled = bool(payload[2])
+        tracking_channels = payload[3]
+
+        return [
+            f"QZSS Status: {'ENABLED' if enabled else 'DISABLED'}",
+            f"QZSS Tracking Channels: {tracking_channels}",
+            f"       Payload (Bytes): {hex_str}"
+        ]
+
     # Cannot parse, generic O/P -----------------------------------------------------------
 
     return [ f"O/P: {hex_str}" ]
@@ -162,10 +180,15 @@ def __ch341rdr_phoenix_parse_userinput(user_input: bytes) -> bytes:
         $COMMAND[:KEY=VAL,KEY=VAL,...]
 
     Commands:
+
         $Get-Active-Constellations
         $Get-Msg-Intervals
+        $Get-QZSS-Status
+
         $Set-Active-Constellations:GP=1,GL=0,GA=1,GB=1,GI=1,W=0
         $Set-Msg-Intervals:GGA=1,GSA=1,GSV=3,GLL=1,RMC=1,VTG=1,ZDA=1,GNS=0,GBS=0,GSR=0,DTM=0,GST=1,W=0
+        $Set-QZSS-Status:En=1,Ch=3,W=1
+
         $Restart
     """
     if user_input[0:1] != b"$":
@@ -201,6 +224,9 @@ def __ch341rdr_phoenix_parse_userinput(user_input: bytes) -> bytes:
 
     if command == "get-msg-intervals":
         return b"\x64\x03"
+
+    if command == "get-qzss-status":
+        return b"\x62\x04"
 
     # -------------------------------------------------------------------------
     # SET commands
@@ -239,6 +265,20 @@ def __ch341rdr_phoenix_parse_userinput(user_input: bytes) -> bytes:
 
         return payload + bytes([w])
 
+    if command == "set-qzss-status":
+        # Payload: 62 03 [En:1B] [Ch:1B] [W:1B]
+        # Reference: Page 54-55 of AN0037
+
+        w  = 0x01 if int(kv_pairs.get("w", "0"))  else 0x00
+        en = 0x01 if int(kv_pairs.get("en", "0")) else 0x00
+
+        ch = int(kv_pairs.get("ch", "1"))
+
+        if not (1 <= ch <= 3):
+            raise ValueError(f"invalid QZSS tracking channel count: {ch} (valid: 1-3)")
+
+        return b"\x62\x03" + bytes([ en, ch, w ])
+
     # -------------------------------------------------------------------------
     # MISC commands
     # -------------------------------------------------------------------------
@@ -263,7 +303,7 @@ def ch341rdr_write(user_input: bytes) -> bytes:
 
     parsed_userinput = __ch341rdr_phoenix_parse_userinput(user_input)
     if parsed_userinput != user_input:
-        log.info("entered commandparsed_userinput: %s", parsed_userinput.hex(" "))
+        log.info("entered command (hex): %s", parsed_userinput.hex(" "))
 
     # A0 A1 [size:2B] [payload:size] [cs:1B] 0D 0A
     # [size] unit is in bytes, stored big endian
